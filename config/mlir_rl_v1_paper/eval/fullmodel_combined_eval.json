@@ -1,0 +1,23 @@
+{
+  "model_mobile_net_v2": 390160901,
+  "model_res_net": 5420361806,
+  "model_vgg": 21840348605,
+  "convnext_tiny_linalg": 9640729977.0,
+  "efficientnet_b0_linalg": 465749660.0,
+  "gat_linalg": 49836754.0,
+  "gin_linalg": 21916481.0,
+  "mobilenet_v3_small_linalg": 75403315.0,
+  "resnet50_linalg": 5521459873.5,
+  "resnext50_linalg": 5710871194.5,
+  "t5_linalg": 2002419505.5,
+  "vgg16_linalg": 24697781486.0,
+  "albert_linalg": 6784331122.0,
+  "distilbert_linalg": 3377569506.5,
+  "whisper_base_linalg": 196952920906.5,
+  "gpt2_linalg": 6685499490.0,
+  "yolov8m_linalg": 33476849722.5,
+  "vit_b_16_linalg": 57955437378.5,
+  "bart_linalg": 3380299202.5,
+  "bert_linalg": 6787484179.0,
+  "llama3_2_1b_linalg": 948431407253.5
+}

@@ -1,0 +1,6 @@
+numpy
+python-dotenv
+torch
+tqdm
+dask-jobqueue
+typeguard

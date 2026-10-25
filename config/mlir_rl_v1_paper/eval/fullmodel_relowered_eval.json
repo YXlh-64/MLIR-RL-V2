@@ -1,0 +1,11 @@
+{
+  "albert_linalg": 6784331122.0,
+  "distilbert_linalg": 3377569506.5,
+  "whisper_base_linalg": 196952920906.5,
+  "gpt2_linalg": 6685499490.0,
+  "yolov8m_linalg": 33476849722.5,
+  "vit_b_16_linalg": 57955437378.5,
+  "bart_linalg": 3380299202.5,
+  "bert_linalg": 6787484179.0,
+  "llama3_2_1b_linalg": 948431407253.5
+}

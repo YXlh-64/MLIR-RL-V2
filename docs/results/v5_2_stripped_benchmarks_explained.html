@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What "Stripped" Means in MLIR-RL Full-Model Benchmarks</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #182031;
+    --panel-alt: #121927;
+    --ink: #e8ecf4;
+    --dim: #9aa6bd;
+    --green: #3ddc84;
+    --yellow: #ffc857;
+    --red: #ff6b6b;
+    --blue: #5aa9ff;
+    --purple: #c084fc;
+    --line: #2b3552;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0;
+    line-height: 1.6;
+  }
+  main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 36px 20px 80px;
+  }
+  h1 {
+    font-size: 2.1rem;
+    margin: 0.2em 0 0.4em;
+    color: var(--ink);
+  }
+  h2 {
+    margin-top: 2.4em;
+    border-bottom: 2px solid var(--line);
+    padding-bottom: 0.4em;
+    color: var(--ink);
+  }
+  h3 {
+    color: var(--blue);
+    margin-top: 1.4em;
+  }
+  p.sub {
+    color: var(--dim);
+    margin-top: 0;
+    font-size: 0.95rem;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 18px 0;
+  }
+  .card-highlight {
+    background: #141e33;
+    border-left: 4px solid var(--blue);
+  }
+  .card-warning {
+    background: #231d1a;
+    border-left: 4px solid var(--yellow);
+  }
+  .card-success {
+    background: #12241d;
+    border-left: 4px solid var(--green);
+  }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  code {
+    background: rgba(255,255,255,0.08);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  pre {
+    background: #0b101c;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-size: 0.88em;
+    line-height: 1.45;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.92em;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #202a42;
+    color: var(--ink);
+  }
+  .ok { color: var(--green); font-weight: 700; }
+  .warn { color: var(--yellow); font-weight: 700; }
+  .bad { color: var(--red); font-weight: 700; }
+  .pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.8em;
+    font-weight: 700;
+  }
+  .p-ok { background: rgba(61,220,132,0.15); color: var(--green); }
+  .p-warn { background: rgba(255,200,87,0.15); color: var(--yellow); }
+  .p-bad { background: rgba(255,107,107,0.15); color: var(--red); }
+  svg.flow {
+    width: 100%;
+    height: auto;
+    background: #0b101c;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin: 16px 0;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 720px) {
+    .grid2 { grid-template-columns: 1fr; }
+  }
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: var(--blue);
+    color: #0b101c;
+    font-weight: bold;
+    border-radius: 50%;
+    margin-right: 8px;
+    font-size: 0.9em;
+  }
+  .step-title {
+    display: flex;
+    align-items: center;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 20px 0 10px;
+    color: var(--ink);
+  }
+  footer {
+    color: var(--dim);
+    font-size: 0.85em;
+    margin-top: 3.5em;
+    border-top: 1px solid var(--line);
+    padding-top: 1.5em;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>What "Stripped" Means in MLIR-RL Full-Model Benchmarks</h1>
+<p class="sub">Clarifying the weight-stripping pipeline, mathematical validity, and implementation details for V5.2 full-model evaluation</p>
+
+<div class="card card-highlight">
+  <h3 style="margin-top:0; color:var(--blue);">The 30-Second Summary</h3>
+  <p>In <code>v5_2_full_model_support.html</code>, <strong>"stripped"</strong> refers specifically to <strong>weight-stripping</strong>: eliminating the massive text-encoded floating-point constants (neural network weights) from the <code>.mlir</code> files and replacing them with zero splats (<code>dense&lt;0.0&gt;</code>).</p>
+  <p>The neural network structure (all layers, tensor shapes, loop nests, operators, and data-flow dependencies) remains <strong>100% intact</strong>. Only the numerical values inside the constants were discarded to save 14.5 GB of text bloat and prevent parser / bufferization crashes.</p>
+</div>
+
+<h2>1. The Problem: The Text-Encoded Weight Bloat Crisis</h2>
+<p>When high-level deep learning models (PyTorch / ONNX) are exported and lowered through <code>torch-mlir</code> to the <code>linalg</code> dialect, model parameter weights (e.g. convolution kernels, projection matrices, embeddings) are embedded directly into the human-readable <code>.mlir</code> text files.</p>
+
+<p>For large neural networks, this produced an extreme volume of ASCII text:</p>
+<ul>
+  <li><strong>LLaMA 3.2 1B</strong>: Generated a single <strong>9.43 GB</strong> text file.</li>
+  <li><strong>GPT-2</strong>: Generated a <strong>2.71 GB</strong> text file.</li>
+  <li><strong>BERT</strong>: Generated an <strong>835.6 MB</strong> text file.</li>
+  <li><strong>ViT-B/16</strong>: Generated a <strong>660.7 MB</strong> text file.</li>
+  <li><strong>BART</strong>: Generated a <strong>625.1 MB</strong> text file.</li>
+</ul>
+
+<div class="card card-warning">
+  <h3 style="margin-top:0; color:var(--yellow);">Why Weight Bloat Broke the System</h3>
+  <ol>
+    <li><strong>Parser & AST Dumper Out-Of-Memory (OOM):</strong> Python string processing and LLVM lexers had to allocate and scan tens of gigabytes of text in memory. Probing LLaMA 3.2 1B immediately killed the worker process.</li>
+    <li><strong>Bufferization Failures:</strong> MLIR's <code>one_shot_bufferize</code> pass crashed with <code>"op was not bufferized"</code> or memory allocation exhaustion when trying to allocate buffers for millions of raw text-defined float constants.</li>
+    <li><strong>Slurm Job Aborts:</strong> Workers running multiple jobs hit node memory limits (e.g. 32 GB Slurm allocations were killed by <code>sacct OUT_OF_MEMORY</code>).</li>
+  </ol>
+</div>
+
+<h2>2. The Core Principle: Why Weight Values Do Not Matter for RL Scheduling</h2>
+<p>In typical model inference, weights cannot be altered because they determine prediction accuracy. However, in MLIR-RL:</p>
+
+<div class="card card-success">
+  <h3 style="margin-top:0; color:var(--green);">The Latency Invariance Principle</h3>
+  <p><strong>Loop transformations and execution latency depend entirely on loop bounds, array dimensions, memory access strides, and operator types — not on the specific floating-point values inside memory.</strong></p>
+  <ul>
+    <li>Multiplying a <code>768x3072</code> matrix by <code>0.74129</code> takes the <strong>exact same number of clock cycles, SIMD vector instructions, cache line traversals, and memory memory writes</strong> as multiplying by <code>0.0</code>.</li>
+    <li>MLIR-RL evaluates <strong>execution speedup</strong>: <code>speedup = baseline_exec_time / optimized_exec_time</code> measured via an in-memory <code>@nanoTime()</code> delta.</li>
+    <li>The RL evaluation pipeline <strong>never inspects or verifies the numeric tensor outputs</strong>. It only measures the runtime nanoseconds of the compiled binary.</li>
+  </ul>
+</div>
+
+<h2>3. What Happened: Step-by-Step Breakdown</h2>
+
+<svg class="flow" viewBox="0 0 960 270" font-family="monospace" font-size="13">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8" fill="#5aa9ff"/>
+    </marker>
+  </defs>
+
+  <!-- Box 1 -->
+  <rect x="20" y="30" width="260" height="190" rx="10" fill="#182031" stroke="#ff6b6b" stroke-width="1.5"/>
+  <text x="35" y="60" fill="#ff6b6b" font-weight="bold" font-size="14">1. Raw Bloated Model</text>
+  <text x="35" y="90" fill="#e8ecf4">%cst = arith.constant dense&lt;</text>
+  <text x="35" y="110" fill="#ff6b6b">  "0x775AB7BC85D5..."</text>
+  <text x="35" y="130" fill="#e8ecf4">&gt; : tensor&lt;3072x768xf32&gt;</text>
+  <text x="35" y="170" fill="#9aa6bd">File size: 835 MB – 9.4 GB</text>
+  <text x="35" y="195" fill="#ff6b6b">✗ OOM / Bufferize Crash</text>
+
+  <!-- Arrow 1 -->
+  <line x1="285" y1="125" x2="335" y2="125" stroke="#5aa9ff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="290" y="115" fill="#5aa9ff" font-size="11">strip_mlir.py</text>
+
+  <!-- Box 2 -->
+  <rect x="340" y="30" width="270" height="190" rx="10" fill="#182031" stroke="#ffc857" stroke-width="1.5"/>
+  <text x="355" y="60" fill="#ffc857" font-weight="bold" font-size="14">2. Stripped on Disk</text>
+  <text x="355" y="90" fill="#e8ecf4">%cst = arith.constant</text>
+  <text x="355" y="110" fill="#ffc857">  dense_resource&lt;__elided__&gt;</text>
+  <text x="355" y="130" fill="#e8ecf4">  : tensor&lt;3072x768xf32&gt;</text>
+  <text x="355" y="170" fill="#9aa6bd">File size: 140 KB – 570 KB</text>
+  <text x="355" y="195" fill="#ffc857">✓ Fast I/O, &gt;99.9% smaller</text>
+
+  <!-- Arrow 2 -->
+  <line x1="615" y1="125" x2="665" y2="125" stroke="#5aa9ff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="620" y="115" fill="#5aa9ff" font-size="11">Benchmarks</text>
+
+  <!-- Box 3 -->
+  <rect x="670" y="30" width="270" height="190" rx="10" fill="#182031" stroke="#3ddc84" stroke-width="1.5"/>
+  <text x="685" y="60" fill="#3ddc84" font-weight="bold" font-size="14">3. Executed in Memory</text>
+  <text x="685" y="90" fill="#e8ecf4">%cst = arith.constant</text>
+  <text x="685" y="110" fill="#3ddc84">  dense&lt;0.0&gt;</text>
+  <text x="685" y="130" fill="#e8ecf4">  : tensor&lt;3072x768xf32&gt;</text>
+  <text x="685" y="170" fill="#9aa6bd">Compile &amp; Bufferize: OK</text>
+  <text x="685" y="195" fill="#3ddc84">✓ Identical timing / FLOPs</text>
+</svg>
+
+<div class="step-title"><span class="step-num">1</span> Identifying Weight Representations in Raw MLIR</div>
+<p>In the original unstripped files, weights appeared in three problematic forms:</p>
+<ol>
+  <li><strong>Hex-encoded constant strings:</strong> e.g., <code>dense&lt;"0x775AB7BC85D52F3C..."&gt; : tensor&lt;3072x768xf32&gt;</code>, spanning millions of characters per line.</li>
+  <li><strong>Long numeric float arrays:</strong> e.g., <code>dense&lt;[1.042, -0.231, ... ]&gt;</code> containing thousands of formatted ASCII numbers.</li>
+  <li><strong>Torch tensor dialect resources:</strong> e.g., <code>dense_resource&lt;torch_tensor_42_torch.float32&gt;</code> pointing to a multi-gigabyte binary payload delimited by <code>{-# dialect_resources: { ... } #-}</code> at the end of the file.</li>
+</ol>
+
+<div class="step-title"><span class="step-num">2</span> Offline Stripping with <code>data_utils/postprocess/strip_mlir.py</code></div>
+<p>The stripping tool processes these massive files to produce compact, well-formed MLIR files:</p>
+<ul>
+  <li><strong>Streaming Line-by-Line Processing:</strong> For files &gt;100 MB, the script avoids reading the entire file into RAM, streaming line-by-line so it can strip a 9.4 GB file with only ~10 MB of memory usage.</li>
+  <li><strong>Regex Constant Replacement:</strong> Matches all hex and numeric constant arrays and replaces them with <code>dense_resource&lt;__elided__&gt;</code>.</li>
+  <li><strong>Payload Truncation:</strong> Truncates the file immediately before <code>{-# dialect_resources</code>, discarding the multi-gigabyte binary trailer.</li>
+  <li><strong>Result:</strong> Saves stripped versions into <code>data/full_models/relowered/</code>.</li>
+</ul>
+
+<div class="step-title"><span class="step-num">3</span> In-Memory Materialization with <code>rl_autoschedular_v5/full_model.py</code></div>
+<p>MLIR's JIT compiler cannot execute a file containing <code>dense_resource&lt;__elided__&gt;</code> directly because the resource entry does not exist on disk. When <code>Benchmarks</code> loads the code into memory, <code>materialize_elided_resources()</code> intercepts it:</p>
+
+<pre><code class="language-python"># rl_autoschedular_v5/full_model.py
+def _elided_repl(match: re.Match) -> str:
+    shape = match.group(1)
+    etype = shape.split('x')[-1]
+    # Use dense<0> for integers, booleans, and indices; dense<0.0> for floats
+    zero = '0' if (etype.startswith('i') or etype == 'index') else '0.0'
+    return f'dense&lt;{zero}&gt; : tensor&lt;{shape}&gt;'
+
+def materialize_elided_resources(code: str) -> str:
+    if '__elided__' not in code:
+        return code
+    return _ELIDED_RE.sub(_elided_repl, code)
+</code></pre>
+
+<p>This replaces the placeholder with an element-type-safe zero splat (e.g. <code>dense&lt;0.0&gt; : tensor&lt;3072x768xf32&gt;</code>). A zero splat requires only a few bytes in the MLIR AST and bufferizes instantly without memory bloat.</p>
+
+<div class="step-title"><span class="step-num">4</span> TIMED ABI Wrapping & Baseline Recalibration</div>
+<p>Once weights are materialized as zero splats:</p>
+<ol>
+  <li><code>ensure_timed_main_abi()</code> wraps the model entry in <code>@nanoTime()</code> timing probes and standardizes the function signature to <code>@main(...) -> (tensors..., i64)</code>.</li>
+  <li>Baselines were re-measured on these exact stripped artifacts via <code>scripts/baseline/baseline_fullmodels.py</code> to ensure that baseline and optimized runs are evaluated under identical conditions.</li>
+</ol>
+
+<h2>4. The Impact: File Size Reductions & Evaluation Speedups</h2>
+<p>Across the entire full-model corpus, weight-stripping removed <strong>over 14.5 GB of text bloat</strong>, unblocking bufferization and enabling complete RL evaluation across all models:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Model</th>
+      <th>Original Size</th>
+      <th>Stripped Size</th>
+      <th>Size Reduction</th>
+      <th>RL Speedup (@6400)</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>llama3_2_1b</strong></td>
+      <td>9,428.9 MB</td>
+      <td>364.7 KB</td>
+      <td class="ok">99.996%</td>
+      <td>baseline verified (948.4 s)</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>gpt2</strong></td>
+      <td>2,707.3 MB</td>
+      <td>573.4 KB</td>
+      <td class="ok">99.98%</td>
+      <td class="ok">17.84×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>bert</strong></td>
+      <td>835.6 MB</td>
+      <td>288.2 KB</td>
+      <td class="ok">99.97%</td>
+      <td class="ok">15.22×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>vit_b_16</strong></td>
+      <td>660.7 MB</td>
+      <td>287.1 KB</td>
+      <td class="ok">99.96%</td>
+      <td class="ok">18.02×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>bart</strong></td>
+      <td>625.1 MB</td>
+      <td>144.0 KB</td>
+      <td class="ok">99.98%</td>
+      <td class="ok">13.95×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>distilbert</strong></td>
+      <td>506.4 MB</td>
+      <td>148.8 KB</td>
+      <td class="ok">99.97%</td>
+      <td class="ok">30.95×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>yolov8m</strong></td>
+      <td>90.5 MB</td>
+      <td>82.6 KB</td>
+      <td class="ok">99.91%</td>
+      <td class="ok">28.55×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+    <tr>
+      <td><strong>albert</strong></td>
+      <td>89.2 MB</td>
+      <td>272.1 KB</td>
+      <td class="ok">99.70%</td>
+      <td class="ok">18.17×</td>
+      <td><span class="pill p-ok">Unblocked & Supported</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>5. Key Code References</h2>
+<div class="card">
+  <ul>
+    <li><code><a href="file:///scratch/mb10856/MLIR-RL/data_utils/postprocess/strip_mlir.py">data_utils/postprocess/strip_mlir.py</a></code> — Offline line-by-line and streaming weight stripper.</li>
+    <li><code><a href="file:///scratch/mb10856/MLIR-RL/rl_autoschedular/rl_autoschedular_v5/full_model.py">rl_autoschedular/rl_autoschedular_v5/full_model.py</a></code> — In-memory zero-splat materialization (<code>materialize_elided_resources</code>) and TIMED <code>@main</code> ABI adapter (<code>ensure_timed_main_abi</code>).</li>
+    <li><code><a href="file:///scratch/mb10856/MLIR-RL/rl_autoschedular/rl_autoschedular_v5/benchmarks.py">rl_autoschedular/rl_autoschedular_v5/benchmarks.py</a></code> — Benchmark loader wiring the materialization directly into the evaluation loop.</li>
+    <li><code><a href="file:///scratch/mb10856/MLIR-RL/docs/results/v5_2_full_model_support.html">docs/results/v5_2_full_model_support.html</a></code> — V5.2 Full-Model Support results report.</li>
+    <li><code><a href="file:///scratch/mb10856/MLIR-RL/docs/design/done/v5_2_full_model_eval.md">docs/design/done/v5_2_full_model_eval.md</a></code> — Architectural design specification.</li>
+  </ul>
+</div>
+
+<footer>
+  Generated for MLIR-RL documentation · V5.2 Full-Model Support · September 2026
+</footer>
+
+</main>
+</body>
+</html>

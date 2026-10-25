@@ -1,0 +1,11 @@
+{
+  "convnext_tiny_linalg": 9640729977.0,
+  "efficientnet_b0_linalg": 465749660.0,
+  "gat_linalg": 49836754.0,
+  "gin_linalg": 21916481.0,
+  "mobilenet_v3_small_linalg": 75403315.0,
+  "resnet50_linalg": 5521459873.5,
+  "resnext50_linalg": 5710871194.5,
+  "t5_linalg": 2002419505.5,
+  "vgg16_linalg": 24697781486.0
+}
