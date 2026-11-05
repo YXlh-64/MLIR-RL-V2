@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=64
 #SBATCH --constraint=bergamo
 #SBATCH --time=7-00:00:00
-#SBATCH --output=/scratch/mb10856/MLIR-RL/logs/eval_%j.out
-#SBATCH --error=/scratch/mb10856/MLIR-RL/logs/eval_%j.err
+#SBATCH --output=logs/eval_%j.out
+#SBATCH --error=logs/eval_%j.err
 #SBATCH --mail-type=END,FAIL
 #
 # Usage:
@@ -26,8 +26,13 @@ fi
 
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-source "${CONDA_ENV:-$HOME/envs/mlir/bin/activate}"
-export LD_LIBRARY_PATH=$HOME/envs/mlir/lib:$LD_LIBRARY_PATH
+if [[ -d "${CONDA_ENV:-}" ]]; then
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$CONDA_ENV"
+else
+    source "${CONDA_ENV:-$HOME/envs/mlir/bin/activate}"
+fi
+export LD_LIBRARY_PATH="$(dirname "$(command -v python)")/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONPATH="$LLVM_BUILD_PATH/tools/mlir/python_packages/mlir_core:$PROJECT_ROOT:$PROJECT_ROOT/rl_autoschedular${PYTHONPATH:+:$PYTHONPATH}"
 
 export MIN_EXEC_TIMEOUT=${MIN_EXEC_TIMEOUT:-300}

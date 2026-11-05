@@ -1,6 +1,15 @@
 {
   "experiments": [
     {
+      "name": "experiment_01_sampled_categories",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "experiments/01_performance_diagnosis/results",
+      "mode": "performance_comparison",
+      "seed": 2026,
+      "state": "pending",
+      "description": "Previous generated results deleted at user request. Foreground category comparisons: three bounded samples per simple operation type in mlir_rl_v1_paper and ops_and_blocks; full models selected explicitly. No new benchmark runs launched."
+    },
+    {
       "name": "v5_single_node",
       "config": "config/v5/v5_single_node.json",
       "results_dir": "results/ops_and_blocks_results/v5_single_node_agent",

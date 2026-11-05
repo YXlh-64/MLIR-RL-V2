@@ -1,0 +1,7 @@
+/results/
+*.npz
+*.npy
+/inputs/*.pt
+/inputs/*.pth
+/inputs/*checkpoint*
+__pycache__/

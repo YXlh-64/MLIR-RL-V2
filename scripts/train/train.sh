@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --constraint=bergamo
 #SBATCH --time=7-00:00:00
-#SBATCH --output=/scratch/mb10856/MLIR-RL/logs/train_%j.out
-#SBATCH --error=/scratch/mb10856/MLIR-RL/logs/train_%j.err
+#SBATCH --output=logs/train_%j.out
+#SBATCH --error=logs/train_%j.err
 #SBATCH --mail-type=END,FAIL
 set -e
 trap 'echo "TRAINING FAILED"' ERR
@@ -38,8 +38,13 @@ fi
 # (/opt/slurm/default/bin needed by DaskManager for sbatch/squeue when DASK_NODES > 0)
 export PATH="/usr/local/bin:/usr/bin:/bin:/opt/slurm/default/bin:$PATH"
 
-source "${CONDA_ENV:-$HOME/envs/mlir/bin/activate}"
-export LD_LIBRARY_PATH=$HOME/envs/mlir/lib:$LD_LIBRARY_PATH
+if [[ -d "${CONDA_ENV:-}" ]]; then
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$CONDA_ENV"
+else
+    source "${CONDA_ENV:-$HOME/envs/mlir/bin/activate}"
+fi
+export LD_LIBRARY_PATH="$(dirname "$(command -v python)")/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONPATH="$LLVM_BUILD_PATH/tools/mlir/python_packages/mlir_core:$PROJECT_ROOT:$PROJECT_ROOT/rl_autoschedular${PYTHONPATH:+:$PYTHONPATH}"
 
 # Extract --resume flag early, before consuming positional args

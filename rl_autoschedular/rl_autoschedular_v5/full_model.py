@@ -112,13 +112,14 @@ def ensure_timed_main_abi(code: str) -> str:
 
     # Locate the entry body via brace matching.
     body_start = entry.end()
-    depth, pos = 1, body_start
-    while depth > 0 and pos < len(code):
-        if code[pos] == '{':
-            depth += 1
-        elif code[pos] == '}':
-            depth -= 1
-        pos += 1
+    depth, pos = 1, len(code)
+    # Weight literals can span gigabytes; scan braces in C rather than
+    # visiting every literal character in a Python loop.
+    for brace in re.compile(r'[{}]').finditer(code, body_start):
+        depth += 1 if brace[0] == '{' else -1
+        if depth == 0:
+            pos = brace.end()
+            break
     body, pre, post = code[body_start:pos - 1], code[:entry.start()], code[pos:]
 
     # Find the final tensor return.
