@@ -1,385 +1,363 @@
-# Experiment 01 — CPU performance comparison
+# CPU benchmark diagnosis
 
-Experiment 01 evaluates the **same computation, weights and inputs** through:
+Compare **MLIR baseline, MLIR RL, PyTorch eager, TorchInductor and TensorFlow XLA** on the same computation and inputs. Run the three logical categories independently. This is checkpoint inference and CPU measurement, not training.
 
-1. **MLIR baseline:** V5 bufferization/lowering with LLVM optimization level 3, without a learned schedule.
-2. **MLIR RL:** the same pipeline after applying the downloaded policy's schedule.
-3. **PyTorch eager.**
-4. **CPU TorchInductor**, using `torch.compile`.
+There are four Python files and this one README:
 
-This is checkpoint inference and benchmarking, not training. Methods use one CPU thread and the same CPU affinity within a workload. The principal measurement is median host-call latency after warmup.
+- `execution_profiling.py`: execution latency, speedups, execution hardware counters, validation and shared worker/CSV utilities.
+- `compilation_profiling.py`: separate optimization/compilation trials, phase wall/CPU/memory statistics, per-action timing and optional Python function profiling.
+- `backends.py`: native backend execution, checked translation of the actual MLIR graph into framework operations, and V5 MLIR compilation.
+- `plot_speedups.py`: three category figures comparing the four requested methods against MLIR baseline, using validated paired-trial speedups from the execution CSVs.
 
-Generated outputs live under this experiment's `results/` directory. Existing benchmark attempts are preserved and normally skipped on subsequent runs. Read each category's `REPORT.md` for its actual outcomes; the tables below describe the sampling plan.
-
-## Start here: files and setup
-
-| Enclosed file | Responsibility |
-| --- | --- |
-| [run_all.py](run_all.py) | Run **all sampled categories and full models**, sequentially in the foreground. |
-| [run_all.sbatch](run_all.sbatch) | Submit that complete plan as one separately allocated Slurm batch job. |
-| [run_suite.py](run_suite.py) | List samples or run **one dataset/category**. |
-| [experiment.py](experiment.py) | Execute one workload: realize inputs, infer/apply the schedule, compile methods, check outputs and measure latency. |
-| [plot_speedups.py](plot_speedups.py) | Plot a category's existing CSV; never starts benchmarks. Requires Matplotlib. |
-| [run_full_models.sh](run_full_models.sh) | Run **one full model in the foreground**. It no longer submits Slurm jobs or arrays. |
-
-The selected policy is [checkpoints/v5_model_1200.pt](../../checkpoints/v5_model_1200.pt), with [config/v5/v5_mlir_rl_v1_paper.json](../../config/v5/v5_mlir_rl_v1_paper.json). This is the matching 12-loop V5 architecture. The seven-action V5.3 checkpoint is not used because its matching action implementation has not been established here. `v5_single_node.json` does not match the downloaded V5 checkpoint.
-
-**You do not need to write JSON to run a category.** The runner derives argument shapes and equivalent Torch computations from the selected MLIR forms, constructs each specification in memory, and saves one `manifest.json` inside the actual run. No dataset baseline-timing JSON, train/eval split JSON or pre-existing `inputs/experiment.json` is needed.
-
-Use an existing interactive compute-node allocation. Set up a foreground terminal from the repository root:
+Dataset files and the existing `scripts/eval/` and `scripts/baseline/` programs are unchanged. Results belong to this experiment. Generate figures explicitly after execution results are available:
 
 ```bash
-cd /scratch/ab13817/Code/MLIR-RL-V2
-set -a
-source .env
-set +a
-export PATH="$CONDA_ENV/bin:$PATH"
-export PYTHONPATH="$LLVM_BUILD_PATH/tools/mlir/python_packages/mlir_core:$PWD:$PWD/rl_autoschedular${PYTHONPATH:+:$PYTHONPATH}"
-export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+python experiments/01_performance_diagnosis/plot_speedups.py
 ```
 
-The local `.env` supplies the installed Python environment and LLVM build paths. That environment needs NumPy, PyTorch, MLIR Python bindings and the compiler used by TorchInductor.
+This writes exactly three PNGs to `results/figures/speedups_<category>.png`. Each grouped horizontal bar plot shows MLIR baseline, MLIR RL, TorchInductor and PyTorch eager at eight threads. A shared **logarithmic** scale keeps both sub-baseline and very large speedups visible. All three figures have identical limits, power-of-ten ticks, positive bar origins, image dimensions and axes positions, determined from the combined validated results. Equal spacing represents equal ratios; bar endpoint labels give the actual speedups. The dashed reference is 1×; higher is faster. Failed, missing or incomplete trials are marked × in the right-hand N/A column. All sampled benchmarks remain visible, including full models without valid results. Use `--input`, `--output` or `--threads` to select another result root, figure folder or recorded CPU budget.
 
-**The foreground Python/bash examples remain attached to your terminal until they finish.** The driver waits for one isolated method worker before starting the next. Batch submission is a separate option described below. Progress names the active method and its output directory; compiler details go into `worker.log`.
+## Inputs and the fixed selection
 
-Ctrl+C stops the active worker process group and prevents later workloads from starting. Partial diagnostics remain. Do not cancel the interactive Slurm allocation to stop an experiment.
+`benchmark_inventory.csv` is the complete inventory. `sampled_benchmarks.csv` is the **frozen selection used by every run**. Both have the same six columns:
 
-## Run everything with one command
+```text
+dataset,benchmark,operation_count,operation_types,operation_type_counts,category
+```
 
-After the environment setup above, preview the entire plan:
+- `dataset`: `mlir_rl_v1_paper`, `ops_and_blocks` or `full_models`.
+- `benchmark`: filename including `.mlir`; resolved as `data/<dataset>/<benchmark>`.
+- `operation_count`: number of static Linalg operations, including fill and excluding index/yield.
+- `operation_types`: JSON list, for example `["linalg.generic", "linalg.matmul"]`.
+- `operation_type_counts`: JSON dictionary, for example `{"linalg.generic": 3, "linalg.matmul": 2}`.
+- `category`: `single_operations`, `multi_operation_blocks` or `full_models`.
+
+The current selection contains **24 single-operation files, 22 blocks and 12 full models**. Sampling targets four examples per MLIR operation type within each category, pooled across both source datasets. A mixed-operation file counts towards each type it contains, so common types can appear more than four times. Rare full-model Conv1D and grouped Conv2D have only one available example each; those are retained. The small GIN/GAT models are included as full-program controls.
+
+Kernel sampling limits input tensors to 32 MiB and excludes QCD kernels, which need domain-specific index/input fixtures. The full inventory remains intact. Full models are sampled without hiding known missing-weight/resource limitations; those limitations become explicit outcomes during preparation. This is a bounded diagnostic selection, not an unbiased estimate of all model performance.
+
+To create a **different** frozen selection, write a new CSV:
 
 ```bash
-python experiments/01_performance_diagnosis/run_all.py --dry-run
+python experiments/01_performance_diagnosis/execution_profiling.py sample \
+  --per-type 3 --seed 42 --output /scratch/$USER/another_sample.csv
 ```
 
-The preview lists commands, selected benchmark names and known unsupported groups. It writes nothing and performs no compilation or timing. Full-model weights/state are audited when actually executing their comparisons.
+The sample command preserves exact inventory entries and refuses to overwrite an existing selection. The run command never resamples. Use `--samples /path/to/selection.csv` to select another CSV explicitly.
 
-Run the complete plan in the foreground:
+## Environment
 
-```bash
-python -u experiments/01_performance_diagnosis/run_all.py
-```
-
-The launcher reuses `run_suite.py` and its existing sampler, measurements and output layout. It runs:
-
-1. All five simple-operation categories from `mlir_rl_v1_paper`.
-2. All six simple-operation categories from `ops_and_blocks`.
-3. Every `.mlir` file in `data/full_models/`, one model at a time. GIN/GAT use all four methods; other weight-complete models use explicitly labelled **MLIR-only diagnostics**, because their Torch references are not implemented. Models with missing weights/state are refused and recorded as blocked.
-
-The default simple-operation selection remains **33 benchmarks**, not every file in the datasets. Increasing `--samples` selects more eligible distinct signatures while retaining the resource bounds. QCD families are included in the plan/status table as blocked until valid input fixtures and independent references exist. The three legacy paper `model_*` files are also recorded as blocked because the automatic category runner does not implement their comparisons; they need custom manifests. No arbitrary multi-operation block comparisons are invented.
-
-Each method, benchmark and category finishes before the next starts. Failed/blocked categories do not stop later categories. **Ctrl+C stops the active worker and the whole plan**, leaving later entries pending. Completed benchmark attempts are skipped by default, including failed attempts; add `--rerun` to retry them. A skipped prior failure is still reported as failed in the overall status.
-
-Optional example with more samples and longer full-model limits:
-
-```bash
-python -u experiments/01_performance_diagnosis/run_all.py \
-  --samples 5 --full-model-timeout-seconds 1800
-```
-
-Other options: `--seed`, `--max-input-mib`, `--max-work`, `--timeout-seconds` (simple-operation per-method cap), and `--rerun`. Defaults remain 1,200 seconds per method for simple operations and 600 seconds for full models. Changing limits does not fix missing weights or compiler failures.
-
-Start with **`results/RUN_ALL.csv`** for overall progress. It updates before/after each category, lists selected benchmarks and the category report path relative to `results/`. Reports appear once benchmark results have been saved. This CSV is the only additional file generated by `run_all.py`; no new JSON configuration is needed. A later invocation refreshes it while retaining benchmark attempts. Batch submission also produces a Slurm log.
-
-| Overall status | Meaning |
-| --- | --- |
-| `pending` / `running` | Not yet started / currently executing. |
-| `passed` | All requested methods have measurements and passed independent cross-backend checks. |
-| `unverified` | Measurements exist, but independent validation is unavailable, as in an MLIR-only diagnostic. |
-| `failed` / `incomplete` | Saved method failures, failed correctness, missing requested methods or an unexpected driver failure. |
-| `blocked` | Comparison cannot run with the supplied weights/state/reference or resource bounds. Inspect terminal diagnostics for preflight refusals. |
-| `interrupted` | Stopped with Ctrl+C. Remaining entries were not started. |
-
-Exit code 0 means every planned comparison passed; 1 means at least one entry is blocked, failed, incomplete or unverified; 130 means interrupted. **With the currently missing full-model/QCD inputs/references, a complete traversal will still return 1.** That accurately reports incomplete validation rather than claiming all models succeeded.
-
-## Run everything through Slurm (sbatch)
+Use the MLIR Conda environment and a reserved compute-node allocation. Commands below run sequentially in the foreground; they do not submit or cancel Slurm jobs. Reserve at least **eight physical cores** for the single eight-thread CPU budget, with enough memory for the selected compilation workloads. Source-file and input-buffer limits do not bound compiler peak memory.
 
 From the repository root:
 
 ```bash
-mkdir -p experiments/01_performance_diagnosis/results
-sbatch experiments/01_performance_diagnosis/run_all.sbatch
+set -a
+source .env
+set +a
+export PATH="$CONDA_ENV/bin:$PATH"
+
+python experiments/01_performance_diagnosis/execution_profiling.py doctor
 ```
 
-The results directory must exist before submission because Slurm opens the log before the script starts. The script loads `.env`, selects its Python environment and sets MLIR/library paths itself; interactive environment setup is not required for this submission command. Submit with `sbatch`, not `bash`: Bash does not interpret `#SBATCH` resource requests.
+The runner also sources the repository `.env` through Bash before launching workers. This supports the shell expansions used in this repository. V5 config imports occur only after worker environment setup. The default checkpoint/config are `checkpoints/v5_model_1200.pt` and `config/v5/v5_mlir_rl_v1_paper.json`; they must match. Only the standalone V5 implementation is imported.
 
-Defaults are **one node, one task, 2 CPUs, 192 GB RAM, three days**, on `compute` with the `bergamo` node constraint. The task runs all categories/models sequentially. Each benchmark remains single-threaded; allocating 16 CPUs does not make this runner evaluate 16 models concurrently. The memory request gives large full models headroom over the earlier observed approximately 44 GB peak; it is not a measured guarantee that every remaining compiler stage fits. The three-day job limit covers the complete plan; individual methods retain their own shorter timeouts.
-
-Slurm resource overrides go **before** the script filename. Python options go **after** it:
+TensorFlow can use a separate Python environment through `--tensorflow-python`, avoiding changes to the MLIR/evaluation environment. An isolated TensorFlow CPU environment is available on this machine:
 
 ```bash
-sbatch --cpus-per-task=16 --mem=256G --time=3-00:00:00 \
-  experiments/01_performance_diagnosis/run_all.sbatch \
-  --full-model-timeout-seconds 1800
+export TF_BENCH_PYTHON=/scratch/ab13817/codex/cache/benchmark-tensorflow-env/bin/python
+python experiments/01_performance_diagnosis/execution_profiling.py doctor \
+  --tensorflow-python "$TF_BENCH_PYTHON"
 ```
 
-This creates a new job allocation; it does not enlarge or borrow resources from an existing interactive job. Slurm selects an eligible node with sufficient available resources, possibly another node or spare resources on the same physical node. Both allocations count separately toward account limits. `--mem=192G` with one node requests that memory on one machine, not RAM pooled from multiple nodes. Plain Python, or `srun` within an existing allocation, uses that allocation's resources. Inside this batch file, `srun` uses the **new batch allocation**.
-
-Slurm uses the resources requested in the submission; it does not infer the model's future peak memory or automatically expand an allocation when more is needed. Larger requirements should be requested before launching. See the official [sbatch resource documentation](https://slurm.schedmd.com/sbatch.html) and [job/step allocation guide](https://slurm.schedmd.com/job_launch.html).
-
-The submission prints a job ID. Replace `JOB_ID` below with that number:
+For another machine, an example isolated installation is:
 
 ```bash
-squeue -j JOB_ID
-tail -f experiments/01_performance_diagnosis/results/slurm_JOB_ID.log
-sacct -j JOB_ID --format=JobID,State,ExitCode,Elapsed,AllocCPUS,ReqMem,MaxRSS
+"$CONDA_ENV/bin/python" -m venv --system-site-packages /scratch/$USER/tensorflow-benchmark-env
+/scratch/$USER/tensorflow-benchmark-env/bin/python -m pip install tensorflow-cpu
+export TF_BENCH_PYTHON=/scratch/$USER/tensorflow-benchmark-env/bin/python
 ```
 
-The log appears after the job starts. `results/RUN_ALL.csv` and category reports use the same locations as foreground runs. Because the complete runner returns 1 for blocked/unverified comparisons, Slurm can report `FAILED` with exit code `1:0` after the plan was fully traversed; inspect the CSV/log to distinguish that from a crash, time limit or OOM. Do not run two launchers against these same output directories simultaneously.
+TensorFlow uses `tf.function(jit_compile=True)` with CPU execution and synchronous calls. Compilation failures are recorded; the runner does not fall back to ordinary TensorFlow execution. See the official [tf.function documentation](https://www.tensorflow.org/api_docs/python/tf/function) and [synchronous execution setting](https://www.tensorflow.org/api_docs/python/tf/config/experimental/set_synchronous_execution).
 
-## Sampling decisions
+## Commands for each category
 
-Categories come from the actual single MLIR operation:
-
-| Category | MLIR form | Matching Torch computation |
-| --- | --- | --- |
-| `add` | `linalg.add` | `A + B`; initial output is overwritten. |
-| `relu` | The dataset's single `linalg.generic` zero/compare/select body | `relu(A)` |
-| `matmul` | `linalg.matmul` | `A @ B + C_initial` |
-| `batch_matmul` | `linalg.batch_matmul` | Batched `A @ B + C_initial` |
-| `conv2d` | `linalg.conv_2d_nchw_fchw` | NCHW convolution with source stride/dilation, plus initial output. |
-| `max_pool2d` | `linalg.pooling_nchw_max` | Pool with source window/stride/dilation, then maximum with initial output. |
-
-Including the initial-output tensors is essential for equivalent accumulation/pooling semantics.
-
-Defaults select **three distinct input/computation signatures per category**, uniformly without replacement, using seed **2026**. Eligibility is bounded to **32 MiB of argument tensors** and **100 million estimated arithmetic/reduction operations** per benchmark. Selection never depends on previously observed performance or success. Repeating the same options over the same dataset files gives the same sample.
-
-These are manageable bounded samples, not coverage of the largest shapes or every originating model family. The work estimate does not include compilation or guarantee a successful run. Sampling uses the whole local dataset, **not a verified held-out split** from checkpoint training.
-
-Preview categories and exact sampled stems without creating output files:
+Preview a category, including the exact CPU budgets, without writing results:
 
 ```bash
-python experiments/01_performance_diagnosis/run_suite.py --dataset mlir_rl_v1_paper --list
-python experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --list
+python experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category single_operations --dry-run
 ```
 
-### Paper dataset: five categories
-
-All sampled stems below identify `.mlir` files in `data/mlir_rl_v1_paper/`.
-
-| Category | Available files | Default sampled stems |
-| --- | ---: | --- |
-| `add` | 281 | `add_15_56_15_28`, `add_150_7_15_14`, `add_112_28_14_14` |
-| `relu` | 163 | `relu_256_64_7_7`, `relu_256_128_7_7`, `relu_128_256` |
-| `matmul` | 202 | `matmul_128_1024_128`, `matmul_512_128_256`, `matmul_1024_128_256` |
-| `conv2d` | 296 | `conv_2d_nchw_fchw_256_32_7_7_128_1_1_4_4`, `conv_2d_nchw_fchw_256_48_7_7_64_1_1_4_4`, `conv_2d_nchw_fchw_128_64_7_7_64_1_1_7_7` |
-| `max_pool2d` | 260 | `pooling_nchw_max_128_48_15_15_7_5_5`, `pooling_nchw_max_128_96_15_15_3_7_7`, `pooling_nchw_max_128_96_7_7_3_3_3` |
-
-Run **one line**, wait for the prompt to return, read its category report, then run the next:
+Run each category separately, using the same frozen CSV and five backends:
 
 ```bash
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset mlir_rl_v1_paper --category add
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset mlir_rl_v1_paper --category relu
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset mlir_rl_v1_paper --category matmul
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset mlir_rl_v1_paper --category conv2d
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset mlir_rl_v1_paper --category max_pool2d
+python -u experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category single_operations --tensorflow-python "$TF_BENCH_PYTHON"
+
+python -u experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category multi_operation_blocks --tensorflow-python "$TF_BENCH_PYTHON"
+
+python -u experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category full_models --tensorflow-python "$TF_BENCH_PYTHON"
 ```
 
-This selects 15 workloads, up to 60 method attempts. The local paper dataset has no simple `batch_matmul` category.
+The agreed execution protocol is:
 
-### Ops-and-blocks dataset: six categories
-
-These stems identify single-operation files in `data/ops_and_blocks/`. Extracted multi-operation `*_block_*` files are outside this selection.
-
-| Category | Available files | Default sampled stems |
-| --- | ---: | --- |
-| `add` | 281 | `add_28_15_112_7`, `add_240_15_7_14`, `add_240_14_7_28` |
-| `relu` | 163 | `relu_128_1024`, `relu_128_3072`, `relu_256_96_7_7` |
-| `matmul` | 226 | `vgg16_matmul_2`, `matmul_128_128_768`, `matmul_256_1024_128` |
-| `batch_matmul` | 53 | `vit_b_16_batch_matmul_2`, `albert_batch_matmul_4`, `llama3_2_1b_batch_matmul_2` |
-| `conv2d` | 410 | `efficientnet_b0_conv_2d_nchw_fchw_31`, `resnext50_conv_2d_nchw_fchw_1`, `efficientnet_b0_conv_2d_nchw_fchw_1` |
-| `max_pool2d` | 267 | `pooling_nchw_max_128_384_7_7_3_3_3`, `pooling_nchw_max_128_128_7_7_3_3_3`, `pooling_nchw_max_128_64_7_7_3_3_3` |
-
-Run each category synchronously:
-
-```bash
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --category add
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --category relu
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --category matmul
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --category batch_matmul
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --category conv2d
-python -u experiments/01_performance_diagnosis/run_suite.py --dataset ops_and_blocks --category max_pool2d
-```
-
-This selects 18 workloads, up to 72 method attempts. Together the selections contain **33 workloads across 11 dataset/category combinations**. Some kernels occur in both datasets; these are separate dataset selections, not 33 necessarily unrelated computations.
-
-### Paper QCD families: sampled, with references still needed
-
-The paper dataset also has 152 multi-operation QCD kernels and three `model_*` full-model files. These are not additional simple operation types. `--list` also samples three stems per QCD family:
-
-| Family | Sampled stems |
+| Setting | Default |
 | --- | --- |
-| `baryon` | `baryon_128_4`, `baryon_16_4`, `baryon_8_64` |
-| `baryon_loop_lin` | `baryon_loop_lin_16_1`, `baryon_loop_lin_64_4`, `baryon_loop_lin_8_1` |
-| `baryon_loop_lin_rev` | `baryon_loop_lin_rev_16_64`, `baryon_loop_lin_rev_64_1`, `baryon_loop_lin_rev_8_4` |
-| `baryon_rewrite` | `baryon_rewrite_16_128`, `baryon_rewrite_32_8`, `baryon_rewrite_64_16` |
-| `dibaryon_dibaryon` | `dibaryon_dibaryon_12`, `dibaryon_dibaryon_3`, `dibaryon_dibaryon_48` |
-| `dibaryon_hexaquark` | `dibaryon_hexaquark_16`, `dibaryon_hexaquark_256`, `dibaryon_hexaquark_64` |
-| `hexaquark_hexaquark` | `hexaquark_hexaquark_12_true`, `hexaquark_hexaquark_3_true`, `hexaquark_hexaquark_6_true` |
+| CPU budget | **Eight threads**, pinned to eight allocated physical cores; no thread-count sweep |
+| Process trials | **Three** fresh workers per benchmark/backend |
+| First invocation | One, recorded separately from execution latency |
+| Correctness | Three shared input cases |
+| Warmup | **Five** additional untimed calls |
+| Measured execution | **Five** timed calls per worker; take their median |
+| CPU/hardware window | **At least one second AND at least three complete calls**, separate from timed execution |
 
-These are **catalogued, not ready for automatic four-way execution**: independent Torch contractions and appropriate domain-specific integer/index/coefficient input fixtures remain to be provided. They are not covered by the simple-operation resource bounds. Arbitrary generic MLIR cannot safely be replaced by a guessed Torch expression.
+One measurement worker means one Python process handling **one benchmark, one backend and one trial** at the campaign's CPU budget. It can use eight CPU threads; a worker is not a CPU core. Workers run sequentially, with shuffled backend order per trial. With five backends, one benchmark has **15 measurement workers and 75 timed calls**, plus preparation, scheduling, correctness, warmup and profiling. These fresh processes repeat backend setup/compilation, but execution calls inside a worker reuse its executable. CPU allocation allows parallel work; it does not guarantee that a backend uses all eight cores.
 
-## Preview, adjust and retry
-
-Preview one category; writes nothing and runs no compiler or benchmark:
+Both profiling scripts accept the same category/type/name filters. Restrict the selection to contained operation types or a sampled benchmark:
 
 ```bash
-python experiments/01_performance_diagnosis/run_suite.py \
-  --dataset ops_and_blocks --category batch_matmul --dry-run
+python experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category single_operations --op-type add matmul \
+  --tensorflow-python "$TF_BENCH_PYTHON"
+
+python experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category multi_operation_blocks --benchmark gin_block_21 \
+  --tensorflow-python "$TF_BENCH_PYTHON"
+
+# Category is inferred when the matching CSV rows belong to one category.
+python experiments/01_performance_diagnosis/compilation_profiling.py run \
+  --benchmark resnext50_linalg --dry-run
 ```
 
-Optional overrides:
+`--op-type` selects files **containing** any requested MLIR type; combine it with category/name filters to intersect the selections. `linalg.generic` is not relabelled as an assumed semantic operation. Names accept a stem (`gin_block_21`), a filename (`gin_block_21.mlir`) or `dataset/name` to disambiguate. `--only` remains an alias for `--benchmark`; `--operation-category` and `--operation-type` are aliases for the shorter options. Filters only select from the frozen CSV and never trigger new sampling. An unknown name, conflicting filter or selection spanning multiple categories is rejected. Selecting ResNeXt is supported; its missing external BatchNorm fixtures still block an actual run.
 
-- `--samples 5`: select five rather than three eligible distinct signatures.
-- `--seed 2027`: choose a different reproducible sample/input seed.
-- `--only matmul_128_128_128`: choose a named benchmark within the selected category.
-- `--max-input-mib 64 --max-work 200000000`: explicitly expand resource bounds, including for `--only`.
-- `--timeout-seconds 1800`: change the per-method cap, including compilation/setup.
-- `--rerun`: preserve a new attempt even if the benchmark already has a completed summary.
+### Separate compilation and optimization runs
 
-Simple-operation defaults are three correctness cases, ten warmups, 100 latency repeats and a **1,200-second cap per method**. The methods and then sampled benchmarks run sequentially. Errors/timeouts are recorded and remaining selected methods/workloads are attempted. A new failed attempt gives category exit code 1.
+The compilation script repeats **schedule inference, action application and compilation** in each fresh trial. It makes one invocation, with no execution warmups, latency repeats or steady-state hardware profiling. Defaults are **eight threads and three trials**, giving 15 compilation workers per benchmark with all five backends. RL inference uses one Torch thread, then the worker restores the eight-thread budget before lowering/JIT/execution. Compiler passes may remain serial.
 
-A completed `summary.json` causes that benchmark to be skipped next time, **including completed failed attempts**. Use `--rerun` to retry. Interrupted attempts without a summary do not count as completed. Reports select the latest completed attempt per benchmark. Changing seed/sample size adds results to the category; it does not erase earlier selections. Running without arguments prints help and starts nothing.
+```bash
+python -u experiments/01_performance_diagnosis/compilation_profiling.py run \
+  --category single_operations --tensorflow-python "$TF_BENCH_PYTHON"
 
-## Outputs: which files matter?
+python -u experiments/01_performance_diagnosis/compilation_profiling.py run \
+  --category multi_operation_blocks --tensorflow-python "$TF_BENCH_PYTHON"
 
-Example destination for the paper matmul category:
+python -u experiments/01_performance_diagnosis/compilation_profiling.py run \
+  --category full_models --tensorflow-python "$TF_BENCH_PYTHON"
+
+# Small block investigation, restricted using the sampled CSV.
+python -u experiments/01_performance_diagnosis/compilation_profiling.py run \
+  --category multi_operation_blocks --op-type matmul --benchmark gin_block_21 \
+  --trials 1 --methods mlir_baseline mlir_rl
+
+# Optional Python hotspots: use a different output root for instrumented results.
+python -u experiments/01_performance_diagnosis/compilation_profiling.py run \
+  --benchmark gin_block_21 --trials 1 \
+  --methods mlir_baseline mlir_rl --python-profile \
+  --output /scratch/$USER/compilation_python_profile
+```
+
+Default roots are `results/execution/<category>/` and `results/compilation/<category>/`. `--output` replaces the root before the category is appended. Compilation success means compilation and the first invocation completed; numerical validation and performance claims belong to the execution script.
+
+A short end-to-end check, writing to a separate output root:
+
+```bash
+python experiments/01_performance_diagnosis/execution_profiling.py run \
+  --category single_operations --only add_112_15_15_15.mlir \
+  --trials 1 \
+  --output /scratch/$USER/benchmark_smoke \
+  --tensorflow-python "$TF_BENCH_PYTHON"
+```
+
+Other controls:
+
+| Option | Meaning |
+| --- | --- |
+| `--threads 8` | One CPU budget, default eight. A single explicit override is allowed for another machine; lists/sweeps are rejected. |
+| `--trials 3` | Fresh process trials per benchmark/backend; all trials use the same CPU budget. |
+| `--warmup 5` | Additional untimed calls after the first invocation and correctness checks; execution script only. |
+| `--repeats 5` | Timed execution calls in each worker; execution script only. |
+| `--profile-seconds 1 --profile-repeats 3` | Minimum elapsed wall time and complete calls for the separate execution profiling window; both conditions must hold. |
+| `--methods mlir_baseline mlir_rl torch_eager` | Restrict backends; full validation requires baseline and eager. |
+| `--timeout 1800` | Whole-worker cap in seconds, including setup, compilation and profiling. |
+| `--max-input-mib 64` | Maximum summed input-buffer size at preparation. |
+| `--max-source-mib 256` | Refuse larger source files before loading them into Python memory. |
+| `--preprocess none` | Disable the common standard V5 standalone-Conv2D img2col preprocessing. |
+| `--no-perf` | Execution script: keep latency/CPU-usage/static evidence; mark hardware counters unavailable. |
+| `--python-profile` | Compilation script: save `python.prof` and a compact `python_profile.txt`; instrumentation perturbs timings. |
+| `--python /path/to/python` | Override the MLIR/PyTorch worker interpreter. |
+| `--output /path/to/root` | Separate campaign output root; category directories are appended. |
+| `--retry-failed` | Reattempt saved failed workers; retain successful measurements. |
+
+Reusing the same command resumes the same category campaign and skips completed worker attempts, including recorded failures. Use `--retry-failed` for failures. Settings, host/CPU budgets, source code, sample CSV, checkpoint/config hashes and interpreter paths must match the campaign. For changed settings or code, use a new output root. **Do not run two launchers against the same category output at once.**
+
+Ctrl+C stops only the current worker group and launcher, preserving completed results. It does not cancel the interactive Slurm allocation. For execution, exit 0 means every requested backend/trial passed numerical validation; for compilation it means every requested trial compiled and completed one invocation. Exit 1 means some requested trials did not meet that criterion; 130 means interrupted. Missing execution counters alone do not invalidate a numerically correct latency measurement.
+
+Each category is registered automatically in root `experiments.json` **before** worker launch, as required by repository instructions. Only this registry is updated outside the experiment's output directory.
+
+## Implementation and execution order
+
+`execution_profiling.py` owns argument parsing, CSV selection, CPU allocation, preparation, scheduling, isolated process launch, validation and aggregation. `compilation_profiling.py` reuses that infrastructure and supplies its own compile worker and phase summary. `backends.py` supplies the faithful framework adapters, MLIR compiler/JIT and static IR analysis. Backend imports occur inside workers, after environment/config setup. TensorFlow and MLIR/PyTorch use separate workers to avoid conflicting native libraries.
+
+Both commands accept a single integer `--threads` (default 8). The campaign JSON retains `threads: [8]` as a singleton list to preserve the existing summary/artifact schema. Results still use `threads_8/trial_<K>/`; no additional thread settings are launched. Too few allocated physical cores is an error, rather than a silent change of CPU budget. The backend thread limits and CPU affinity are set before native imports. `run --dry-run` lists matching CSV rows and the chosen CPU set without writing results.
+
+For execution profiling, the lifecycle is:
+
+1. **Prepare once per benchmark.** Read/adapt the source in memory, construct the reference plan, save the same three seeded input cases, and apply any recorded common V5 preprocessing to both MLIR methods.
+2. **Generate the RL schedule once.** A dedicated one-core worker extracts features/dependencies, loads the checkpoint and greedily chooses actions. Policy decisions are written to `schedule.json`. State updates during planning do not execute the benchmark.
+3. **Apply the schedule in that same worker.** After planning, apply the ready actions to actual MLIR, audit successes/fallbacks/failures in `applied_actions.json`, and save `scheduled.mlir`. Generation and application both precede measurement workers. Failed scheduling blocks RL measurements.
+4. **Launch each backend/trial worker at eight threads.** MLIR baseline loads `prepared.mlir`; MLIR RL loads the same saved `scheduled.mlir` for every trial. Each worker performs its own setup/compilation, restores case 0 inputs, and records one first invocation.
+5. **Check outputs, then warm up.** Execute each of the three correctness cases and save outputs; the parent compares them across backends. Restore case 0 before each of five additional warmup calls.
+6. **Measure five execution calls.** Restore case 0 before each call and record synchronous host-call nanoseconds. Input reset, output checking/copying/disposal, compilation and scheduling are outside each timed call. Preserve all five samples and calculate their median.
+7. **Profile CPU/hardware use separately.** Repeatedly restore/call/dispose until at least one second and three calls have completed. Preserve actual elapsed time, call count, CPU time, per-thread activity and available perf totals. This window does not contribute execution-latency samples.
+8. **Save artifacts and aggregate trials.** Save compiler evidence and rebuild the category CSV, JSON summary and schedule index. A repeated command resumes saved workers rather than generating another schedule or rerunning completed trials.
+
+Compilation boundaries depend on the backend:
+
+| Backend | During worker setup | During the separate first invocation |
+| --- | --- | --- |
+| MLIR baseline / MLIR RL | MLIR parsing, bufferization, lowering and JIT engine creation | Remaining lazy LLVM/JIT materialization as needed, then execution |
+| TorchInductor | Build the native reference graph and create the `torch.compile` wrapper | Lazy compilation and execution |
+| TensorFlow XLA | Create the `tf.function(jit_compile=True)` wrapper | Graph tracing/XLA compilation as needed and execution |
+| PyTorch eager | Build the native-operation reference graph; no whole-program optimizing compiler | Execute native operators; runtime/library initialization may still occur |
+
+The first invocation is **additional to** the five warmups and five timed calls. It includes an execution and only the compilation work deferred until that call; it is not total compilation time. In compilation profiling, MLIR symbol lookup explicitly materializes the JIT before the first invocation. Inductor/XLA retain a combined lazy-compilation-and-first-call interval. RL scheduling is regenerated and applied inside **each compilation trial**, whereas execution trials reuse one saved schedule. No policy inference or action application happens during warmup, measured calls or hardware profiling.
+
+## Measurement definitions
+
+### A. Execution performance
+
+The primary metric is **synchronous host-call latency** around one invocation. It includes framework/Python/FFI dispatch and result allocation. Input restoration, output copying/checking/disposal, compilation and policy inference are outside the timed call. The reference interpreter runs once during setup: PyTorch FX produces an eager native-operation forward graph, which Inductor also consumes; TensorFlow traces the equivalent graph for XLA. The measured call does not traverse inventory/plan dictionaries. The graphs are faithful translations of these MLIR programs, not unrelated canonical pretrained framework implementations; generic scalar computations can still use more native operators than a hand-written framework model. TensorFlow synchronous execution is enabled explicitly. All backends execute on CPU. All three saved cases are used for correctness; warmup, latency and profiling use case 0 to keep the working set fixed.
+
+Every trial retains its five nanosecond samples, median, mean, standard deviation, minimum and maximum. `result.json.call_counts` records the first invocation, correctness, warmup, measured and profiling call counts separately. `comparison.csv` reports the median of the three process-trial medians and their range, a separate validated-only median, profiling counters/IPC/cache-miss rate, observed busy cores, median profiling call count/duration and main compilation/scheduling costs. Complete details remain in per-worker JSON. Calls within one process are not treated as independent trials or confidence intervals. MLIR internal `nanoTime()` deltas are saved separately and never divided by framework host times.
+
+`median_validated_speedup` is the median of paired-trial ratios `baseline host median / candidate host median` at the **same eight-thread budget**. Greater than 1 is faster. Each trial median comes from its five measured calls. Additional columns compare a backend against eager, Inductor and XLA using validated groups only. There is no one-thread scaling column because this protocol does not collect a one-thread reference.
+
+For fairness:
+
+- One allocated hardware thread per physical core; all methods receive the same CPU set and thread budget. The OpenMP/MKL/BLAS/framework limits are set together. Requesting additional Slurm CPUs alone does not change the benchmark budget.
+- Worker execution is sequential. Method order is reproducibly shuffled within each thread/trial group.
+- Exact seeded nonzero arrays are generated once, hashed, saved and reused. All arguments, including initial output/accumulator tensors, are restored before every call. Actual embedded weights are decoded, never replaced with random or zero tensors.
+- Baseline and RL share V5 bufferization/lowering and LLVM **O3**. "Baseline" means no learned schedule, not O0. Standard V5 standalone Conv2D img2col preprocessing is common to both and recorded. `--preprocess none` provides a separate raw-Conv2D experiment.
+- Every saved correctness case/output is checked for count, shape, dtype, finite values and equality within `rtol=1e-4`, `atol=1e-5` (integer/bool exact). Baseline and eager must agree; other methods must agree with both. Invalid or unavailable comparisons have null validated speedups.
+
+### B. Hardware profiling
+
+Profiling is a **separate post-warmup window**, outside primary latency samples:
+
+- `perf stat`: cycles, instructions, cache references/misses and branches/misses, with raw events, units, per-call normalization and multiplexing information retained.
+- Process CPU time / wall time estimates average busy cores. Per-thread CPU-tick deltas show which workers actually consumed CPU time; assigned CPU sets are recorded separately from the main thread's post-binding affinity.
+- MLIR scheduled/bufferized/lowered IR, actual JIT object and disassembly provide static vectorization/parallel-region evidence. Inductor retains its generated C++/cache. XLA retains optimized HLO when its inspection API is available.
+- `dependencies.json` retains extracted loop bounds, load/store indexing and producer/consumer information; `reference_plan.json` retains original graph/indexing maps. These support static investigation of memory access patterns and fusion opportunities.
+
+The stop rule is **elapsed wall time >= 1 second AND completed calls >= 3**. One second is a minimum, not a deadline: a two-second benchmark needs at least six seconds for its three complete calls, while a fast kernel may execute many more than three calls. `parallel_execution` saves the actual `profile_calls`, `profile_wall_ns`, minimum thresholds and CPU-use statistics. Hardware totals are accumulated over the complete window and normalized per call; CPU utilization is computed from aggregate CPU time divided by window wall time (and by eight for allocated-utilization percent). These are window aggregates, not the median of three individual profiling calls. The category CSV takes medians of the three workers' window metrics. `--no-perf` disables hardware counters but retains the CPU-use window and its stop rule.
+
+The perf window includes the repeated-call harness, input restoration and output disposal. Counts are **not kernel-only**. Generic cache events do not identify a specific cache level or measure DRAM bandwidth; static SIMD mentions do not measure dynamic vector utilization. No such measurements are fabricated. Unsupported counters remain null with diagnostics in `perf.log`/`perf.csv`. Profiling itself can perturb cache behavior, which is why it is separated from primary timing.
+
+### C. Scheduling behavior
+
+`SCHEDULES.md` keeps the previous collapsible per-benchmark schedule format with action parameters and artifact links. Each workload has a shared `methods/mlir_rl/` folder:
+
+- `schedule.json`: all policy choices, including incomplete pointer decisions, parameters, extras and current producer selection.
+- `applied_actions.json`: actual ready-action application order, parameters, elapsed time and `applied`, `fallback` or `failed` outcome.
+- `dependencies.json`: operation types, dependencies, loop bounds and static memory-access features.
+- `dependency_graph.json`: explicit operation nodes and producer → consumer edges, with consumer operand indices, before scheduling.
+- `fusion_report.json`: each applied fusion's producer, consumer, operand, generated fused tag, before/after tag locations and whether the original producer remains. An empty list means no ready fusion was applied.
+- `schedule_ir_analysis.json`: before/after scheduling graphs and static intermediate/allocation counts.
+- `scheduled.mlir`: the resulting program, reused for every execution trial at the eight-thread budget.
+- `result.json`: scheduling status and feature/model/inference/application costs.
+
+The planned `V(True)` string alone is not evidence of vectorization. V5 can restore the original IR and change it to `V(False)`; that is recorded as `fallback`. Other transformation exceptions fail RL scheduling rather than being silently counted as applied. Fusion is `confirmed_fused_clone` only when the ready action succeeds and its expected producer/consumer fused tag actually appears in the IR. Its loop locations and any residual original producer are retained; this does not assert that all producer computation or all intermediate storage disappeared. Failed actions retain unconfirmed fusion evidence.
+
+For every MLIR backend, `ir_analysis.json` records input, bufferized and LLVM-lowered snapshots. It includes operation counts, direct shaped-SSA dependency graphs (region arguments are explicit), intermediate tensor-result values, memref-result values, `memref.alloc`/`alloca`/`realloc` sites and LLVM heap-call/stack-allocation sites. It also counts written buffer identities, merging explicit memref views, including caller-provided destination arguments. `intermediate_written_buffer_identities` excludes directly returned buffers/views: zero local allocations therefore does not imply zero intermediate storage. Return-related classification follows direct returns and explicit memref views; it is not a complete loop/interprocedural alias/escape analysis. Static sites inside loops may execute repeatedly, and views can share storage. These are **static counts, not peak live buffers or peak tensor memory**. The execution CSV exposes the main counts; complete graphs and allocation locations stay in the artifact JSON. Graphs describe the actual IR at each stage; LLVM lowering naturally removes tensor/memref SSA types. Framework artifacts remain FX/generated C++ or optimized HLO, without invented MLIR buffer counts.
+
+### D. Compilation and scheduling cost
+
+Use `compilation_profiling.py` for independent, repeated optimization profiles. Execution results still retain setup costs as context, but reuse one schedule across their execution trials.
+
+The compilation script saves `compilation.csv` with **one row per benchmark/backend/thread/trial/phase**, plus a process-wall row for every attempt, including failures. Columns identify the phase, wall nanoseconds, user/system CPU nanoseconds, CPU time of waited-for child processes, page faults, context switches and process high-water RSS before/after the phase (KiB on this Linux system). RSS is a process-wide high-water mark, not phase-local allocation or current memory. CPU times include native worker threads; child CPU covers compiler subprocesses that have been waited for. `summary.json` aggregates phase medians over successful trials only. Individual failed stages and their reasons remain visible.
+
+| Requested phase | Recorded boundary |
+| --- | --- |
+| MLIR parsing and feature extraction | `mlir_parse_ns`, `schedule_ir_parse_ns`, `feature_extraction_ns` for RL; feature extraction includes V5's AST extraction subprocesses. |
+| RL inference | `policy_inference_ns` sums observation/model/action selection; `schedule.json` has per-decision wall/CPU costs, and the result has summed inference CPU time. `checkpoint_loading_ns` is separate. |
+| Transformations | `action_00001_ns`, etc. wrap only each actual `action.apply`; `applied_actions.json` maps these phases to operations and parameters. |
+| Bufferization and LLVM lowering | `bufferization_ns` is the existing V5 helper, which also performs cleanup/vector lowering; `mlir_lowering_ns` applies the saved execution pass pipeline. |
+| LLVM/JIT and first invocation | `jit_engine_creation_ns`, then `llvm_jit_materialization_ns` performs symbol lookup without invoking main; `first_invoke_ns` records the subsequent first call. |
+| Framework compilation | Native graph construction/wrapper setup and TensorFlow graph tracing are separate. Inductor/XLA `lazy_compile_and_first_invoke_ns` includes compilation plus one execution; pure compiler time is not inferred from it. Eager has only setup and its first call. |
+
+`backend_setup_total_ns` overlaps its nested MLIR/setup phases. `policy_rollout_ns` overlaps inference and includes state updates/audit writes. `schedule_application_ns` overlaps per-action phases and includes auditing. Do not add these inclusive totals to their children. IR inspection and file writes are outside the individual parse/bufferize/lower/action timing intervals, but still affect process wall time and cache state. Preparation costs (source/ABI/reference translation/input generation/common preprocessing) are recorded once in `preparation/result.json`, outside per-trial compiler statistics. These profiles use fresh processes and per-worker Inductor caches; filesystem/OS caches are not flushed.
+
+Optional `--python-profile` saves a cProfile file readable with `python -m pstats path/to/python.prof` and a top-40 cumulative-time text report. It profiles the compile worker including scheduling; Python function/call time can expose wrappers and waits, but does not resolve internal C++ MLIR/LLVM passes. Wall/CPU/resource phase measurements are collected without that option as well. Instrumented campaigns have a distinct setting and should use a separate output root. Compilation profiles are not numerical correctness checks and produce no speedups.
+
+`result.json.compilation` records completed stages separately: source read, ABI adaptation, reference translation, input generation, common preprocessing, feature extraction, checkpoint loading, policy inference, schedule application, MLIR parsing, bufferization, lowering, JIT engine creation, native reference-graph construction, backend-wrapper creation and first invocation, as applicable.
+
+In execution profiles, first invocation may include lazy compilation. It includes one actual execution, so engine/wrapper creation plus first invocation is a **setup upper bound**, not pure compiler time. Baseline/eager do not receive fictitious policy costs. Execution scheduling is measured once per benchmark on one core, rather than hidden in every execution sample. The compilation script regenerates it for every RL trial instead. Per-action `application_ns` and their `transformation_execution_ns` sum separate transform execution from the full audited application phase.
+
+Before each stage the worker persists its status and stage name. Timeouts/crashes retain the last stage and completed costs; a 600-second timeout is a configured whole-worker limit, not an observed execution latency. Partial samples from an interrupted worker are never promoted into successful speedups.
+
+`active_phases` records the nested intervals still running; `phase_status` distinguishes completed and failed intervals. `last_stage` is the most recently entered stage and can already be complete when a failure occurs during intervening artifact work.
+
+## Output structure and statuses
 
 ```text
-results/mlir_rl_v1_paper/matmul/
-├── REPORT.md                    Read first: timings, speedups, failures
-├── comparison.csv               Measurements for analysis/plotting
-├── SCHEDULES.md                  Readable policy choices and schedule links
-└── artifacts/<benchmark>/<timestamp_id>/
-    ├── manifest.json
-    ├── checkpoint_config.json
-    ├── environment.json
-    ├── workload.mlir
-    ├── inputs/case_N.npz
-    ├── summary.json
-    ├── summary.csv
-    └── methods/{mlir_baseline,mlir_rl,torch_eager,torch_inductor}/
+experiments/01_performance_diagnosis/
+├── README.md
+├── execution_profiling.py
+├── compilation_profiling.py
+├── backends.py
+├── benchmark_inventory.csv
+├── sampled_benchmarks.csv
+└── results/
+    ├── execution/<category>/
+    └── compilation/<category>/
+        ├── campaign.json
+        ├── comparison.csv                       # execution only
+        ├── compilation.csv                      # compilation only
+        ├── summary.json
+        ├── SCHEDULES.md
+        └── artifacts/<dataset>/<benchmark_without_extension>/
+            ├── manifest.json
+            ├── policy_config.json
+            ├── inputs.npz
+            ├── constants.npz
+            ├── reference_plan.json
+            ├── prepared.mlir
+            ├── preparation/{result.json,worker.log}
+            └── methods/
+                ├── mlir_rl/{schedule.json,applied_actions.json,dependency_graph.json,
+                │            fusion_report.json,dependencies.json,scheduled.mlir,...}
+                │                                        # shared schedule: execution only
+                └── <backend>/threads_8/trial_<K>/
+                    ├── result.json
+                    ├── worker.log
+                    ├── outputs.npz                       # execution only
+                    ├── perf.csv, perf.log                 # execution, if attempted
+                    ├── ir_analysis.json                  # MLIR stage graphs/counts
+                    ├── schedule.json, applied_actions.json,
+                    │   dependency_graph.json, fusion_report.json,
+                    │   schedule_ir_analysis.json, scheduled.mlir  # compilation RL only
+                    ├── python.prof, python_profile.txt   # compilation --python-profile
+                    └── available compiler artifacts        # backend-specific
 ```
 
-You normally need only **REPORT.md, comparison.csv and SCHEDULES.md**. Everything below `artifacts/` is grouped by benchmark and attempt for reproduction or diagnosis.
+`<category>` is `single_operations`, `multi_operation_blocks` or `full_models`. Both profiles share the same preparation layout; each campaign has its own fixtures. Execution shares one schedule per workload. Compilation stores a new RL schedule beside each trial. `SCHEDULES.md` links the appropriate schedules in either profile. Inductor's necessary compiler cache can create additional generated files. Outputs/caches are ignored by git; the inventory and frozen sample CSV are ordinary reviewable files.
 
-| Generated file | Why it exists; no manual preparation needed |
-| --- | --- |
-| `manifest.json` | Exact run specification: copied source, input shapes/types/generators, Torch graph, checkpoint/config, seed, CPU settings, repeats and tolerances. |
-| `checkpoint_config.json` | Snapshot of the matching policy configuration. |
-| `environment.json` | Host, allocation, compiler/Python details and source/input/checkpoint hashes. |
-| `summary.json` / `summary.csv` | All method outcomes for one benchmark, written after its method attempts finish. |
-| `methods/<method>/result.json` | One method's latency statistics/samples, compilation costs, correctness checks or failure reason. |
-| `methods/<method>/worker.log` | Compiler/Python log; inspect for failures or long silent compilation. |
-| `methods/mlir_rl/policy_config.json` | Runtime copy disabling distributed execution and redirecting policy logs into this attempt. Not another training configuration to tune. |
-| `methods/mlir_rl/schedule.json` | All planned policy decisions, including intermediate pointer choices. `ready: true` means complete action parameters, not successful application. |
-| `methods/mlir_rl/scheduled.mlir` | MLIR after the complete schedule applies successfully; can be absent after transform failure. |
-| `inputs/case_N.npz` | Exact arrays shared by methods, including accumulation/initial-output arguments. |
-| `methods/<method>/outputs_N.npz` | Actual outputs for every correctness case. |
-| Other MLIR/LLVM/JIT files, `inductor_cache/`, `torch_debug/`, `tmp/` | Compiler artifacts and temporary work contained within the attempt. Can consume substantial disk space, especially for full models. |
+`measured` means an execution worker completed timing; inspect its separate correctness field. `compiled` means a compilation worker completed setup and one invocation, without a numerical claim. `unsupported` identifies an unsupported program/reference/ABI. `unavailable` identifies a missing backend module. `blocked` identifies a failed prerequisite such as weights, preparation or RL scheduling. `error`, `timeout` and `interrupted` retain diagnostics. Missing latency is absent/null, never zero. A measured MLIR-only diagnostic can be `unverified` and has no validated five-way speedup.
 
-GIN/GAT also produce a category-level `<model>_weights.npz` and a run copy `weights.npz`, containing the exact embedded weights for Torch reference execution.
+Reference support is intentionally checked: static ranked f32/f64/i32/i64/bool tensors; named add, matmul/batch-matmul, NCHW/FCHW and depthwise convolution, NCHW pooling, fill, broadcast and transpose; projected-permutation generic indexing with supported arithmetic/associative reductions; static reshape/concat/slice forms. A generic's provably unused secondary outputs can be removed from the reference plan; a live result depending on such an accumulator is rejected. Arbitrary indexing/control flow, unusual layouts, unsupported dtypes, missing real weights or unsupported full graphs require another reference adapter or valid fixtures. The runner reports the exact unsupported operation. It does not benchmark unrelated pretrained framework models as substitutes for the stored MLIR programs.
 
-Reports update after each completed benchmark. Refresh saved reports without running anything:
+## Verification and known outcomes
 
-```bash
-python experiments/01_performance_diagnosis/run_suite.py \
-  --dataset mlir_rl_v1_paper --category matmul --report-only
-```
+The fixed selection was checked against the complete inventory: all 58 rows are unchanged inventory entries. Numerical reference checks passed for all 24 selected single operations, all 22 selected blocks, and the GIN/GAT full programs, comparing the actual MLIR computation with eager Torch and CPU XLA. These checks used one fixed test case and are not the full three-trial performance campaign.
 
-Generate exactly three figures, one per data family:
+The previous generated results were cleared when adopting the eight-thread protocol. Verification artifacts are stored outside this experiment under `/scratch/ab13817/codex/cache/eight-thread-protocol-execution/` and `eight-thread-protocol-compilation/`, leaving this experiment's `results/` empty for fresh campaigns.
 
-```bash
-for dataset in mlir_rl_v1_paper ops_and_blocks full_models; do
-  python experiments/01_performance_diagnosis/plot_speedups.py \
-    --results-dir "experiments/01_performance_diagnosis/results/$dataset"
-done
-```
+All three Python files pass `py_compile`. The new default execution protocol passed on `add_112_15_15_15` for **all five backends and all three trials**: 15 workers, 75 latency samples, five warmups per worker, one-second/three-call profiling minima, numerical correctness and median aggregation were checked. Resume preserved worker logs, inputs, policy decisions, applied actions and saved scheduled MLIR, without rerunning measurements. CLI checks verified eight-thread defaults for both scripts and rejection of thread-count lists.
 
-Each command reads the family's category CSVs and writes **one file**, `results/<dataset>/speedup_comparison.png`. The three families are single operations (`mlir_rl_v1_paper`), operations and blocks (`ops_and_blocks`), and full models (`full_models`). Each figure combines all available validated comparisons and shows MLIR baseline (1×), MLIR RL, PyTorch eager and TorchInductor. Missing/failed methods are labelled N/A; workloads without a validated baseline/backend pair are excluded. No benchmarks are rerun. Matplotlib is required and is not installed in the MLIR environment; this machine has an isolated copy, usable by exporting `PYTHONPATH="/scratch/ab13817/codex/cache/experiment01-plotting${PYTHONPATH:+:$PYTHONPATH}"` before plotting. Other diagnostic figures are deferred until their comparison questions and measurements are agreed.
+MLIR baseline/RL compilation profiles passed on `gin_block_21` at eight threads, including cProfile, per-action/phase costs and JIT materialization followed by one invocation. They produced no steady-state latency or hardware windows. The fusion audit confirmed two fused clones while retaining evidence that the original producers remained. Static buffer counts retained four intermediate written buffer identities despite zero local allocation sites. Earlier checks also covered missing-weight and whole-worker timeout outcomes. No full category campaign has been launched with the revised protocol; smoke timings are not performance conclusions.
 
-## How measurements and correctness work
-
-Inputs use fixed seeded nonzero normal values (standard deviation 0.1 for floats), saved once for all methods. Each call restores inputs outside latency timing, including initial-output tensors. Compilation and warmup are excluded. Host-call latency includes dispatch/result allocation, but excludes input restoration, output copying and disposal. The separately saved MLIR `nanoTime` is not divided by Torch host time.
-
-**Speedup = MLIR baseline median host latency / candidate median host latency.** Higher than 1× is faster. A validated speedup requires baseline and candidate to agree with independent eager Torch on every saved case: same output count/order, shape, dtype and finite values, with `rtol=1e-4`, `atol=1e-5` or exact integer equality. A measured timing with failed correctness is not a valid speedup. MLIR-only ratios remain unverified. Errors/timeouts never become zero-latency measurements.
-
-These are single-process trials, not repeated independent trials with confidence intervals. Optional hardware counters are disabled for ordinary sampled runs; separate profiling-loop CPU usage and generated-code artifacts remain available. Static SIMD/vector counts are not dynamic vector utilization.
-
-Schedule application in `experiment.py:policy_schedule()` is strict. A failed transformation fails that RL method. Standard V5 `Env.__apply_sequence` can skip failed transformations and continue, so its failure behavior differs. A saved planned schedule alone does not establish successful application.
-
-## Why full models did not all work
-
-The downloaded `data/full_models/` contains **18 MLIR files**, without the original Torch/ONNX model bundles. This table records the previous attempts, before their generated outputs were deleted:
-
-| Models | Previous outcome | What is needed |
-| --- | --- | --- |
-| ALBERT, ConvNeXt-Tiny, DistilBERT, EfficientNet-B0, GPT-2, ResNet50, VGG16, Whisper-base | Excluded: resources contain `__elided__`; numerical weights are absent. | Exact missing weight resources, or re-export from the matching original model and weights. |
-| ResNeXt50 | Convolution weights embedded, but 160 entry arguments include external BatchNorm state with no saved values. | Exact running means/variances, counters and remaining argument/state values plus their mapping and inference semantics; preferably a complete inference re-export. |
-| GIN | All four methods completed and agreed. | No missing weights for the implemented reference. |
-| GAT | Baseline/eager/Inductor agreed; RL schedule application aborted. | Diagnose/fix the MLIR transformation failure. |
-| MobileNetV3-Small, T5 | Baseline measured; RL transform failed; full Torch reference not implemented. | Repair transformation application and provide matching Torch graphs using the exact embedded weights. |
-| BART, BERT | Baseline exceeded the 600-second method cap; RL transform failed; Torch reference not implemented. | Diagnose setup/compilation time, increase limits where justified, fix transforms and provide equivalent Torch graphs. |
-| LLaMA 3.2 1B, ViT-B/16, YOLOv8m | Both MLIR methods exceeded the 600-second cap; Torch reference not implemented. | Identify the slow stage, allow adequate resources/time and provide Torch equivalents. LLaMA used about 44 GB RSS in a 192 GB allocation: the previous failure was not established as OOM. |
-
-The transform abort was a `PybindAdaptors.h` **unchecked-error-message assertion** in the MLIR transform interpreter. That is a compiler/application failure; it does not establish missing weights or a numerical mismatch. The precise failing transformation still requires investigation.
-
-A method timeout covers parsing, ABI adaptation, policy inference, transformations, lowering, JIT setup, correctness calls and measurements. It does not prove that one model inference takes ten minutes. More RAM/time cannot recover missing weights, implement an absent Torch graph or repair a compiler assertion.
-
-This experiment rejects elided constants. The ordinary V5 full-model helper contains a zero-materialization path for timing-only evaluation; it is not used here because that cannot establish equivalence to the original weighted model.
-
-### What information is needed for a fair comparison of every full model?
-
-1. **Exact graph, parameters and buffers:** preferably the matching PyTorch architecture/source and state dictionary, or ONNX plus all external tensor-data files. Elided values cannot be recovered from the MLIR text. A public pretrained model with the same name is insufficient unless its graph and weights match.
-2. **An executable equivalent Torch reference:** original PyTorch is the direct route for eager/Inductor. Reconstructing from complete MLIR is possible, as for GIN/GAT, but remains unimplemented for the other seven weight-complete models. Having embedded MLIR weights alone does not supply a Torch implementation.
-3. **Input/output and state semantics:** argument order, shapes, dtypes, layouts, index ranges, attention masks, preprocessing, output order and evaluation mode. Supply any external/mutable buffers and representative saved inputs/expected outputs.
-4. **Working MLIR compilation and transformations:** establish baseline correctness, diagnose failing actions, and distinguish a complete schedule from partial application.
-5. **Matched execution conditions and sufficient resources:** same values, precision, threading, CPU affinity and host-call scope; compilation reported separately; adequate memory, disk and wall time for large models.
-
-Training learning rates/optimizer settings are not the missing information. The matching architecture/action configuration for the selected V5 policy is already available.
-
-### Inspect or run one full model, in the foreground
-
-These commands inspect sources only and write no JSON. Auditing reads large files and can take time:
-
-```bash
-python experiments/01_performance_diagnosis/run_suite.py --dataset full_models --list
-python experiments/01_performance_diagnosis/run_suite.py --audit-only
-```
-
-Run the implemented full GIN comparison:
-
-```bash
-bash experiments/01_performance_diagnosis/run_full_models.sh gin_linalg
-```
-
-The same launcher accepts `gat_linalg`, whose RL failure still needs repair. Full-model defaults: two correctness cases, two warmups, 20 repeats and a 600-second cap per method.
-
-An explicitly **MLIR-only diagnostic**, not a validated four-way result:
-
-```bash
-bash experiments/01_performance_diagnosis/run_full_models.sh mobilenet_v3_small_linalg \
-  --allow-mlir-only --timeout-seconds 1800
-```
-
-Models with absent weights/state are refused. Other weight-complete models require `--allow-mlir-only` until Torch references exist. Outputs go to `results/full_models/<model_stem>/` with the same report/artifact layout. Nothing is submitted to Slurm.
-
-## Advanced: a custom block or full-model reference
-
-Only for extending automatic coverage, generate an editable example (creates input files, runs nothing):
-
-```bash
-python experiments/01_performance_diagnosis/experiment.py init
-```
-
-This optional workflow creates `inputs/workload.mlir` and `inputs/experiment.json`. Here JSON is user input describing the source, argument arrays, exact Torch graph and checkpoint/config paths. The template has no checkpoint selected; set those paths for RL. Relative paths resolve against the input JSON. This is separate from the category workflow, which needs no hand-written JSON.
-
-Run the custom workload synchronously:
-
-```bash
-python -u experiments/01_performance_diagnosis/experiment.py run \
-  experiments/01_performance_diagnosis/inputs/experiment.json \
-  --output experiments/01_performance_diagnosis/results/custom
-```
-
-Use `python experiments/01_performance_diagnosis/experiment.py explain` for the schema and measurement contracts. A custom reference must match accumulator, layout, convolution, reduction, constant and output semantics; a matching filename alone is not evidence of equivalence.
+GAT's baseline/eager/Inductor/XLA outputs agree, but this checkpoint's RL application fails on `operation_22: TPF(operation_21;0,16,2)` with a native MLIR diagnostic assertion. This is retained as a failed transformation and blocked RL measurement, with no invented speedup. The underlying evaluation/transform implementation was not changed. Other full models can be blocked by missing real weights, source-size limits or unsupported references, as documented above.

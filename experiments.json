@@ -61,6 +61,60 @@
       "seed": 42,
       "state": "stopped",
       "description": "V5 LSTM (no transformer) on exact paper split, bergamo baselines"
+    },
+    {
+      "name": "performance_diagnosis_single_operations",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/execution/single_operations",
+      "mode": "execution_profiling",
+      "seed": 2026,
+      "state": "failed",
+      "description": "Five-backend execution profiling; fixed inventory samples; threads=[8]; 3 independent trials"
+    },
+    {
+      "name": "performance_diagnosis_multi_operation_blocks",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/execution/multi_operation_blocks",
+      "mode": "execution_profiling",
+      "seed": 2026,
+      "state": "failed",
+      "description": "Five-backend execution profiling; fixed inventory samples; threads=[8]; 3 independent trials"
+    },
+    {
+      "name": "performance_diagnosis_full_models",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/execution/full_models",
+      "mode": "execution_profiling",
+      "seed": 2026,
+      "state": "failed",
+      "description": "Five-backend execution profiling; fixed inventory samples; threads=[8]; 3 independent trials"
+    },
+    {
+      "name": "compilation_diagnosis_multi_operation_blocks",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "experiments/01_performance_diagnosis/results/compilation/multi_operation_blocks",
+      "mode": "compilation_profiling",
+      "seed": 2026,
+      "state": "pending",
+      "description": "Ready: 22 frozen sampled files; five CPU backends; eight threads only; three fresh process trials per backend; RL schedule regenerated per trial, phase/resource costs and one invocation. Previous generated results cleared; smoke validation in external cache; full category campaign not launched."
+    },
+    {
+      "name": "compilation_diagnosis_single_operations",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "experiments/01_performance_diagnosis/results/compilation/single_operations",
+      "mode": "compilation_profiling",
+      "seed": 2026,
+      "state": "pending",
+      "description": "Ready: 24 frozen sampled files; five CPU backends; eight threads only; three fresh process trials per backend; RL schedule regenerated per trial, phase/resource costs and one invocation. Previous generated results cleared; smoke validation in external cache; full category campaign not launched."
+    },
+    {
+      "name": "compilation_diagnosis_full_models",
+      "config": "config/v5/v5_mlir_rl_v1_paper.json",
+      "results_dir": "experiments/01_performance_diagnosis/results/compilation/full_models",
+      "mode": "compilation_profiling",
+      "seed": 2026,
+      "state": "pending",
+      "description": "Ready: 12 frozen sampled files; five CPU backends; eight threads only; three fresh process trials per backend; RL schedule regenerated per trial, phase/resource costs and one invocation. Previous generated results cleared; smoke validation in external cache; full category campaign not launched."
     }
   ]
 }
