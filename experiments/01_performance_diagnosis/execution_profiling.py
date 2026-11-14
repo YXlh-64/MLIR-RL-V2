@@ -417,6 +417,16 @@ def thread_ticks():
     return result
 
 
+def thread_affinities():
+    """Record actual Linux thread masks; a main-thread mask alone is misleading."""
+    masks = {}
+    for path in Path('/proc/self/task').iterdir():
+        try:
+            masks[path.name] = sorted(os.sched_getaffinity(int(path.name)))
+        except ProcessLookupError: pass
+    return masks
+
+
 class PerfCounters:
     """Attach disabled perf events *after* compilation, then control the window.
 
@@ -571,7 +581,10 @@ def worker(task):
     progress = Progress(out, resources=task['config'].get('profiling') == 'compilation')
     progress.result['assigned_cpu_affinity'] = task['cpus']
     config = task['config']
+    config['cpus'] = task['cpus']
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    if not set(task['cpus']).issubset(os.sched_getaffinity(0)):
+        raise ValueError('Worker CPUs must be within the inherited allocation')
     os.sched_setaffinity(0, task['cpus'])
     try:
         if task['mode'] == 'prepare': prepare(config, out, progress)
@@ -579,6 +592,7 @@ def worker(task):
         elif task['mode'] == 'compile':
             from compilation_profiling import compile_benchmark
             compile_benchmark(config, task['method'], out, progress)
+        elif task['mode'] == 'openmp_control': openmp_control(config, out, progress)
         else: measure(config, task['method'], out, progress)
     except Exception as error:
         from backends import Unsupported
@@ -587,6 +601,7 @@ def worker(task):
             reason=f'{type(error).__name__}: {error}')
         traceback.print_exc()
     finally:
+        progress.result['thread_cpu_affinity'] = thread_affinities()
         progress.flush()
 
 
@@ -596,9 +611,13 @@ def launch(task, python, timeout, threads):
     out.mkdir(parents=True, exist_ok=True)
     write_json(out / 'result.json', dict(status='running', last_stage='process_startup', compilation={}))
     env = dict(os.environ)
+    # These vendor overrides take precedence over OMP_PLACES. Use the same
+    # explicit, allocation-limited places for every backend instead.
+    for key in ('KMP_AFFINITY', 'KMP_HW_SUBSET', 'GOMP_CPU_AFFINITY'):
+        env.pop(key, None)
     env.update({k: str(threads) for k in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
                                          'NUMEXPR_NUM_THREADS', 'TF_NUM_INTRAOP_THREADS')})
-    env.update(OMP_DYNAMIC='FALSE', MKL_DYNAMIC='FALSE', OMP_PROC_BIND='close',
+    env.update(OMP_DYNAMIC='FALSE', MKL_DYNAMIC='FALSE', OMP_PROC_BIND='close', OMP_THREAD_LIMIT=str(threads),
         OMP_PLACES=','.join('{' + str(cpu) + '}' for cpu in task['cpus']),
         TF_NUM_INTEROP_THREADS='1', CUDA_VISIBLE_DEVICES='', DASK_NODES='0', DASK_TRAINING_ONLY='1',
         TORCHINDUCTOR_CACHE_DIR=str(out / 'inductor_cache'), TORCHINDUCTOR_COMPILE_THREADS='1',
@@ -648,6 +667,149 @@ def physical_cpus():
         nodes = list(base.glob('node[0-9]*'))
         chosen.setdefault(key, (int(nodes[0].name[4:]) if nodes else 0, cpu))
     return [cpu for _, cpu in sorted(chosen.values())]
+
+
+# Generated only by check-openmp; this links the exact libomp used by MLIR.
+# Eight independent lanes do identical useful arithmetic in the serial and
+# parallel runs. Checksums prevent dead-code elimination and verify equality.
+OPENMP_CONTROL_SOURCE = r'''
+#define _GNU_SOURCE
+#include <omp.h>
+#include <sched.h>
+#include <stdint.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
+typedef struct {
+    int thread, team, tid, cpu, affinity_count, affinity_cpu;
+    double cpu_seconds;
+    uint64_t checksum;
+} Record;
+static double cpu_time(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return t.tv_sec + t.tv_nsec * 1e-9;
+}
+void run_control(int threads, uint64_t iterations, Record *records) {
+    #pragma omp parallel for num_threads(threads) schedule(static)
+    for (int lane = 0; lane < 8; ++lane) {
+        Record *r = &records[lane];
+        double start = cpu_time();
+        uint64_t x = lane + 1;
+        for (uint64_t i = 0; i < iterations; ++i) {
+            x ^= x >> 13;
+            x *= UINT64_C(2862933555777941757);
+            x ^= x << 7;
+        }
+        r->checksum = x;
+        r->cpu_seconds = cpu_time() - start;
+        r->thread = omp_get_thread_num();
+        r->team = omp_get_num_threads();
+        r->tid = syscall(SYS_gettid);
+        r->cpu = sched_getcpu();
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        sched_getaffinity(0, sizeof(mask), &mask);
+        r->affinity_count = CPU_COUNT(&mask);
+        r->affinity_cpu = -1;
+        for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+            if (CPU_ISSET(cpu, &mask)) { r->affinity_cpu = cpu; break; }
+    }
+}
+'''
+
+
+def openmp_control(config, out, progress):
+    """Exercise the Torch -> LLVM initialization order used by MLIR workers."""
+    import ctypes
+    import torch
+    from backends import initialize_mlir_openmp
+    torch.set_num_threads(1)  # Compilation profiling first uses a serial policy.
+    torch.set_num_threads(8)
+    progress.result['openmp_placement'] = initialize_mlir_openmp(config['cpus'], 8)
+
+    class Record(ctypes.Structure):
+        _fields_ = [(key, ctypes.c_int) for key in
+            ('thread', 'team', 'tid', 'cpu', 'affinity_count', 'affinity_cpu')]
+        _fields_ += [('cpu_seconds', ctypes.c_double), ('checksum', ctypes.c_uint64)]
+
+    native = ctypes.CDLL(str(out / 'control.so'))
+    native.run_control.argtypes = [ctypes.c_int, ctypes.c_uint64, ctypes.POINTER(Record)]
+    native.run_control.restype = None
+
+    def run(threads, iterations):
+        records = (Record * 8)()
+        start = time.perf_counter()
+        native.run_control(threads, iterations, records)
+        wall = time.perf_counter() - start
+        rows = [{key: getattr(row, key) for key, _ in Record._fields_} for row in records]
+        return dict(wall_seconds=wall, average_busy_cores=sum(r['cpu_seconds'] for r in rows) / wall,
+            lanes=rows)
+
+    run(8, 10000)  # Initialize the team outside the measurement.
+    calibration = run(1, 1000000)
+    # Aim for about half a CPU-second per lane, bounded even on unusual hosts.
+    lane_seconds = sum(r['cpu_seconds'] for r in calibration['lanes']) / 8
+    iterations = max(1000000, min(2000000000, round(1000000 * .5 / max(lane_seconds, 1e-9))))
+    serial, parallel = run(1, iterations), run(8, iterations)
+    speedup = serial['wall_seconds'] / parallel['wall_seconds']
+    checks = dict(
+        eight_threads={r['thread'] for r in parallel['lanes']} == set(range(8))
+            and all(r['team'] == 8 for r in parallel['lanes']),
+        eight_distinct_allocated_cpus={r['cpu'] for r in parallel['lanes']} == set(config['cpus']),
+        exact_thread_binding=all(r['affinity_count'] == 1 and
+            r['affinity_cpu'] == config['cpus'][r['thread']] for r in parallel['lanes']),
+        every_thread_did_work=all(r['cpu_seconds'] >= .05 for r in parallel['lanes']),
+        same_outputs=[r['checksum'] for r in serial['lanes']] == [r['checksum'] for r in parallel['lanes']],
+        concurrent_cpu_use=parallel['average_busy_cores'] >= 6,
+        useful_work_speedup=speedup >= 2)
+    progress.result.update(status='verified' if all(checks.values()) else 'error', checks=checks,
+        iterations_per_lane=iterations, serial=serial, parallel=parallel, speedup=speedup,
+        reason=None if all(checks.values()) else 'OpenMP control failed; inspect checks and thread records')
+
+
+def check_openmp_command(args):
+    """Compile/run a small eight-core control without loading dataset files."""
+    cpus = physical_cpus()[:8]
+    if len(cpus) != 8:
+        raise ValueError('check-openmp requires eight allocated physical cores')
+    load_environment()
+    output = args.output.resolve()
+    if output.is_relative_to((ROOT / 'data').resolve()): raise ValueError('Output must be outside data/')
+    output.mkdir(parents=True, exist_ok=True)
+    settings = dict(config=str(Path(__file__).resolve()), profiling='openmp_control',
+        seed=2026, threads=[8], trials=1, run=str(output))
+    register('openmp_control', output, settings, 'running')
+    try:
+        build = Path(os.environ['LLVM_BUILD_PATH'])
+        (output / 'control.c').write_text(OPENMP_CONTROL_SOURCE)
+        toolchain = []
+        gcc = Path(os.environ.get('CONDA_ENV', sys.prefix)) / 'bin/x86_64-conda-linux-gnu-gcc'
+        if gcc.is_file():
+            # HPC nodes may have no system GCC installation for Clang to find.
+            crt = subprocess.check_output([str(gcc), '-print-file-name=crtbeginS.o'], text=True).strip()
+            sysroot = subprocess.check_output([str(gcc), '-print-sysroot'], text=True).strip()
+            toolchain = ['--gcc-install-dir=' + str(Path(crt).resolve().parent), '--sysroot=' + sysroot]
+        # The build-tree omp.h is generated from this LLVM checkout.
+        with (output / 'compiler.log').open('w') as log:
+            subprocess.run([str(build / 'bin/clang'), *toolchain, '-O2', '-fPIC', '-shared', '-fopenmp',
+                '-I' + str(build / 'projects/openmp/runtime/src'), '-L' + str(build / 'lib'),
+                '-Wl,-rpath,' + str(build / 'lib'), str(output / 'control.c'),
+                '-o', str(output / 'control.so')], stdout=log, stderr=log, check=True, timeout=60)
+        python = args.python or str(Path(os.environ.get('CONDA_ENV', sys.prefix)) / 'bin/python')
+        result = launch(dict(mode='openmp_control', cpus=cpus, config=settings, out=str(output)),
+                        python, timeout=120, threads=8)
+        passed = result['status'] == 'verified'
+        register('openmp_control', output, settings, 'done' if passed else 'failed')
+        if passed:
+            print(f"OpenMP verified: 8 threads on {cpus}; {result['parallel']['average_busy_cores']:.2f} busy cores; "
+                  f"{result['speedup']:.2f}x serial speedup")
+        else: print(result.get('reason', 'OpenMP control failed'))
+        print(output / 'result.json')
+        return 0 if passed else 1
+    except Exception:
+        register('openmp_control', output, settings, 'failed')
+        raise
 
 
 def compare(left, right, config):
@@ -793,15 +955,18 @@ def register(category, output, settings, state):
     path = ROOT / 'experiments.json'
     registry = json.loads(path.read_text())
     profiling = settings.get('profiling', 'execution')
-    name = ('compilation_diagnosis_' if profiling == 'compilation' else 'performance_diagnosis_') + category
+    name = ('openmp_placement_control' if profiling == 'openmp_control' else
+        ('compilation_diagnosis_' if profiling == 'compilation' else 'performance_diagnosis_') + category)
     entry = next((r for r in registry['experiments'] if r['name'] == name), None)
     if entry is None:
         entry = dict(name=name)
         registry['experiments'].append(entry)
     entry.update(config=str(Path(settings['config']).relative_to(ROOT)) if Path(settings['config']).is_relative_to(ROOT) else settings['config'],
         results_dir=str(output), mode=profiling + '_profiling', seed=settings['seed'], state=state,
-        description=f"Five-backend {profiling} profiling; fixed inventory samples; threads={settings['threads']}; "
-                    f"{settings['trials']} independent trials")
+        description=('Eight-thread LLVM OpenMP placement and useful-work control after Torch initialization'
+            if profiling == 'openmp_control' else
+            f"Five-backend {profiling} profiling; fixed inventory samples; threads={settings['threads']}; "
+            f"{settings['trials']} independent trials"))
     write_json(path, registry)
 
 
@@ -947,20 +1112,37 @@ def run_command(args):
 
 
 def doctor_command(args):
-    """Read-only environment check; no imports of backend runtimes in the parent."""
+    """Check imports and real CPU XLA compilation in separate child processes."""
     load_environment()
     python = args.python or str(Path(os.environ.get('CONDA_ENV', sys.prefix)) / 'bin/python')
     checks = [('MLIR/PyTorch', python, ('numpy', 'torch', 'mlir.ir')),
               ('TensorFlow XLA', args.tensorflow_python or python, ('tensorflow',))]
+    budget = min(8, len(physical_cpus()))
+    env = dict(os.environ, OMP_NUM_THREADS=str(budget), OPENBLAS_NUM_THREADS=str(budget),
+        TF_NUM_INTRAOP_THREADS=str(budget), TF_NUM_INTEROP_THREADS='1', CUDA_VISIBLE_DEVICES='')
+    failed = False
     for label, executable, modules in checks:
         code = ('import importlib\n' + '\n'.join(f"m=importlib.import_module({name!r}); print({name!r}, getattr(m,'__version__','available'))" for name in modules))
-        result = subprocess.run([executable, '-c', code], capture_output=True, text=True, timeout=60)
+        if label == 'TensorFlow XLA':
+            code += '''
+import tensorflow as tf
+tf.config.set_visible_devices([], 'GPU')
+fn = tf.function(lambda x, y: tf.nn.relu(tf.matmul(x, y) + 1), jit_compile=True, autograph=False)
+x = tf.constant([[1., 2.], [3., 4.]])
+y = tf.eye(2)
+assert fn(x, y).numpy().tolist() == [[2., 3.], [4., 5.]]
+assert 'HloModule' in fn.experimental_get_compiler_ir(x, y)(stage='optimized_hlo')
+print('XLA CPU compilation, execution and correctness: passed')
+'''
+        result = subprocess.run([executable, '-c', code], env=env, capture_output=True, text=True, timeout=120)
+        failed |= result.returncode != 0
         print(label + ':', result.stdout.strip() if result.returncode == 0 else result.stderr[-1500:])
     print('Allocated physical cores:', physical_cpus())
     print('perf:', shutil.which('perf'))
     print('Checkpoint:', args.checkpoint, args.checkpoint.is_file())
     print('AST dumper:', os.environ.get('AST_DUMPER_BIN_PATH'))
     print('No benchmark workers launched.')
+    return 1 if failed else 0
 
 
 def main(profiling='execution'):
@@ -978,6 +1160,10 @@ def main(profiling='execution'):
     doctor.add_argument('--tensorflow-python')
     doctor.add_argument('--checkpoint', type=Path, default=ROOT / 'checkpoints/v5_model_1200.pt')
     doctor.set_defaults(handler=doctor_command)
+    control = commands.add_parser('check-openmp', help='Verify useful parallel work on eight allocated physical cores')
+    control.add_argument('--python', help='MLIR/PyTorch Python; defaults to .env CONDA_ENV/bin/python')
+    control.add_argument('--output', type=Path, default=HERE / 'results/openmp_control')
+    control.set_defaults(handler=check_openmp_command)
     run = commands.add_parser('run', help='Run one logical operation category from the fixed sample CSV',
                               formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     run.add_argument('--category', '--operation-category', choices=CATEGORIES,

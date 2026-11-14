@@ -68,13 +68,13 @@
       "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/execution/single_operations",
       "mode": "execution_profiling",
       "seed": 2026,
-      "state": "failed",
+      "state": "done",
       "description": "Five-backend execution profiling; fixed inventory samples; threads=[8]; 3 independent trials"
     },
     {
       "name": "performance_diagnosis_multi_operation_blocks",
       "config": "config/v5/v5_mlir_rl_v1_paper.json",
-      "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/execution/multi_operation_blocks",
+      "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/execution_continued/multi_operation_blocks",
       "mode": "execution_profiling",
       "seed": 2026,
       "state": "failed",
@@ -115,6 +115,24 @@
       "seed": 2026,
       "state": "pending",
       "description": "Ready: 12 frozen sampled files; five CPU backends; eight threads only; three fresh process trials per backend; RL schedule regenerated per trial, phase/resource costs and one invocation. Previous generated results cleared; smoke validation in external cache; full category campaign not launched."
+    },
+    {
+      "name": "openmp_placement_control",
+      "config": "experiments/01_performance_diagnosis/execution_profiling.py",
+      "results_dir": "/scratch/ab13817/Code/MLIR-RL-V2/experiments/01_performance_diagnosis/results/openmp_control",
+      "mode": "openmp_control_profiling",
+      "seed": 2026,
+      "state": "done",
+      "description": "Eight-thread LLVM OpenMP placement and useful-work control after Torch initialization"
+    },
+    {
+      "name": "tensorflow_xla_environment_check",
+      "config": "experiments/01_performance_diagnosis/execution_profiling.py",
+      "results_dir": "experiments/01_performance_diagnosis/results/tensorflow_xla_check",
+      "mode": "validation",
+      "seed": 2026,
+      "state": "running",
+      "description": "Verify TensorFlow CPU 2.21.0 and actual XLA compilation in the mlir Conda environment, then representative execution workers against saved reference outputs."
     }
   ]
 }

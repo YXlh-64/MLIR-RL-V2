@@ -7,15 +7,18 @@ There are four Python files and this one README:
 - `execution_profiling.py`: execution latency, speedups, execution hardware counters, validation and shared worker/CSV utilities.
 - `compilation_profiling.py`: separate optimization/compilation trials, phase wall/CPU/memory statistics, per-action timing and optional Python function profiling.
 - `backends.py`: native backend execution, checked translation of the actual MLIR graph into framework operations, and V5 MLIR compilation.
-- `plot_speedups.py`: three category figures comparing the four requested methods against MLIR baseline, using validated paired-trial speedups from the execution CSVs.
+- `plot_speedups.py`: three category figures comparing all five backends against MLIR baseline, using validated paired-trial speedups from the execution CSVs.
 
 Dataset files and the existing `scripts/eval/` and `scripts/baseline/` programs are unchanged. Results belong to this experiment. Generate figures explicitly after execution results are available:
 
 ```bash
-python experiments/01_performance_diagnosis/plot_speedups.py
+python experiments/01_performance_diagnosis/plot_speedups.py \
+  --note 'Blocks combine bn001/bn004; original campaigns retain the documented OpenMP placement caveat.'
 ```
 
-This writes exactly three PNGs to `results/figures/speedups_<category>.png`. Each grouped horizontal bar plot shows MLIR baseline, MLIR RL, TorchInductor and PyTorch eager at eight threads. A shared **logarithmic** scale keeps both sub-baseline and very large speedups visible. All three figures have identical limits, power-of-ten ticks, positive bar origins, image dimensions and axes positions, determined from the combined validated results. Equal spacing represents equal ratios; bar endpoint labels give the actual speedups. The dashed reference is 1×; higher is faster. Failed, missing or incomplete trials are marked × in the right-hand N/A column. All sampled benchmarks remain visible, including full models without valid results. Use `--input`, `--output` or `--threads` to select another result root, figure folder or recorded CPU budget.
+This writes exactly three PNGs to `results/figures/speedups_<category>.png`. Each grouped horizontal bar plot shows MLIR baseline, MLIR RL, TorchInductor, PyTorch eager and TensorFlow XLA at eight threads. A shared **logarithmic** scale keeps both sub-baseline and very large speedups visible. All three figures have identical limits, power-of-ten ticks, positive bar origins, image dimensions and axes positions, determined from the combined validated results. Equal spacing represents equal ratios; bar endpoint labels give the actual speedups. The dashed reference is 1×; higher is faster. Failed, missing or incomplete trials are marked × in the right-hand N/A column. All sampled benchmarks remain visible, including blocks not yet measured and full models without valid results. Use `--input`, `--output`, `--threads` or `--samples` to select another result root, figure folder, recorded CPU budget or frozen selection. Use `--note` to label measurement context; the note above applies to the archived default campaigns.
+
+The block reporting outputs now combine the original nine benchmarks with the 13 continuation benchmarks: **22 blocks, 110 backend rows, 109 validated results**. MLIR RL scheduling failed for `efficientnet_b0_block_500`; its speedup remains unavailable. Raw artifacts remain in their source campaigns, and each merged row identifies its source campaign, hostname and CPU IDs. Original aggregates are backed up under the directory recorded in [merge provenance](results/execution/multi_operation_blocks/merge_provenance.json). The original `campaign.json` still describes the original allocation; the merged `summary.json` records both campaigns. These merged aggregates are reporting outputs; collect further measurements into a separate campaign root. See [analysis](results/analysis.md) and [backend statistics](results/backend_summary.csv) for coverage and comparisons on common validated benchmarks.
 
 ## Inputs and the fixed selection
 
@@ -62,19 +65,40 @@ python experiments/01_performance_diagnosis/execution_profiling.py doctor
 
 The runner also sources the repository `.env` through Bash before launching workers. This supports the shell expansions used in this repository. V5 config imports occur only after worker environment setup. The default checkpoint/config are `checkpoints/v5_model_1200.pt` and `config/v5/v5_mlir_rl_v1_paper.json`; they must match. Only the standalone V5 implementation is imported.
 
-TensorFlow can use a separate Python environment through `--tensorflow-python`, avoiding changes to the MLIR/evaluation environment. An isolated TensorFlow CPU environment is available on this machine:
+Verify OpenMP placement before running a new campaign:
 
 ```bash
-export TF_BENCH_PYTHON=/scratch/ab13817/codex/cache/benchmark-tensorflow-env/bin/python
+python experiments/01_performance_diagnosis/execution_profiling.py check-openmp
+```
+
+This requires eight allocated physical cores and the existing LLVM build, Torch and Clang. It generates a small C control in `results/openmp_control/`, links the **same LLVM libomp** used by MLIR, and imports Torch first to exercise the problematic initialization order. Eight independent arithmetic lanes run with one thread and then eight threads, using identical work and checking identical checksums. A pass requires eight distinct allocated CPUs, eight correctly bound threads, useful work by every thread, at least six average busy cores during the parallel call, and at least 2× serial-to-parallel speedup. These conservative utilization/speedup thresholds tolerate some system noise; a busy allocation can fail the check. `result.json` retains each lane's CPU, Linux thread ID, affinity and CPU time, both wall times, checksums and every pass/fail condition. `worker.log` and `compiler.log` retain diagnostics; the command exits nonzero on failure. `--python` and `--output` select another interpreter or control directory. No dataset files are needed.
+
+**Placement fix:** V5 imports Torch's GNU OpenMP runtime, which can bind the main thread to its first CPU. If LLVM's separate OpenMP runtime initializes with that narrowed mask, it discovers only one valid place and ignores the other seven CPU IDs. The shared `MLIRRunner` now restores the worker's assigned CPU set **after V5/Torch imports and before LLVM OpenMP initialization**, initializes the configured LLVM runtime explicitly, and rejects a place list/thread budget that differs from the assignment. This applies to both execution and compilation profiling, including compilation workers that previously ran the policy at one thread. The launcher removes inherited `KMP_AFFINITY`, `KMP_HW_SUBSET` and `GOMP_CPU_AFFINITY` overrides so the explicit `OMP_PLACES` controls placement. Only CPUs selected from the inherited allocation are used. The [LLVM runtime documentation](https://openmp.llvm.org/design/Runtimes.html) describes affinity places and the initial-mask behavior.
+
+This enables actual parallel regions to use eight cores; it does not add parallel transformations to serial schedules or guarantee useful scaling for small/unbalanced workloads. The main thread's one-CPU mask after initialization is normal: inspect all thread masks and CPU time together. Existing measurements are preserved. Results collected with the earlier placement problem need remeasurement; code hashes prevent mixing them with fixed workers. For example:
+
+```bash
+python experiments/01_performance_diagnosis/execution_profiling.py run \
+  --benchmark gin_block_21 --methods mlir_baseline mlir_rl torch_eager torch_inductor \
+  --output experiments/01_performance_diagnosis/results/execution_openmp_fixed
+```
+
+TensorFlow CPU **2.21.0** is installed directly in the `mlir` Conda environment (`$CONDA_ENV/bin/python`). XLA CPU support is included in that package, following the official [TensorFlow pip installation instructions](https://www.tensorflow.org/install/pip). No separate TensorFlow interpreter is needed by default. To reproduce this setup and check it:
+
+```bash
+"$CONDA_ENV/bin/python" -m pip install tensorflow-cpu==2.21.0
+export TF_BENCH_PYTHON="$CONDA_ENV/bin/python"
 python experiments/01_performance_diagnosis/execution_profiling.py doctor \
   --tensorflow-python "$TF_BENCH_PYTHON"
 ```
 
-For another machine, an example isolated installation is:
+`doctor` checks MLIR/PyTorch imports and then TensorFlow in separate subprocesses. Its TensorFlow check compiles a matrix-multiply/add/ReLU function with `jit_compile=True`, executes it, verifies the numerical output and retrieves optimized HLO. It exits nonzero if an import or this XLA check fails. Benchmark backends likewise keep separate workers even when sharing the same Python environment.
+
+An optional separate environment is still supported with `--tensorflow-python`; the existing `/scratch/ab13817/codex/cache/benchmark-tensorflow-env/bin/python` remains available. For another machine, an example isolated installation is:
 
 ```bash
 "$CONDA_ENV/bin/python" -m venv --system-site-packages /scratch/$USER/tensorflow-benchmark-env
-/scratch/$USER/tensorflow-benchmark-env/bin/python -m pip install tensorflow-cpu
+/scratch/$USER/tensorflow-benchmark-env/bin/python -m pip install tensorflow-cpu==2.21.0
 export TF_BENCH_PYTHON=/scratch/$USER/tensorflow-benchmark-env/bin/python
 ```
 
@@ -249,7 +273,7 @@ For fairness:
 Profiling is a **separate post-warmup window**, outside primary latency samples:
 
 - `perf stat`: cycles, instructions, cache references/misses and branches/misses, with raw events, units, per-call normalization and multiplexing information retained.
-- Process CPU time / wall time estimates average busy cores. Per-thread CPU-tick deltas show which workers actually consumed CPU time; assigned CPU sets are recorded separately from the main thread's post-binding affinity.
+- Process CPU time / wall time estimates average busy cores. Per-thread CPU-tick deltas show which workers actually consumed CPU time; assigned CPU sets are recorded separately from the main thread's post-binding affinity. `result.json.thread_cpu_affinity` records every surviving thread's Linux affinity mask, keyed by the same thread IDs. MLIR workers also save `openmp_placement` with the exact runtime path, pre-restoration main-thread mask, assigned CPUs and validated LLVM place list.
 - MLIR scheduled/bufferized/lowered IR, actual JIT object and disassembly provide static vectorization/parallel-region evidence. Inductor retains its generated C++/cache. XLA retains optimized HLO when its inspection API is available.
 - `dependencies.json` retains extracted loop bounds, load/store indexing and producer/consumer information; `reference_plan.json` retains original graph/indexing maps. These support static investigation of memory access patterns and fusion opportunities.
 
@@ -286,6 +310,7 @@ The compilation script saves `compilation.csv` with **one row per benchmark/back
 | RL inference | `policy_inference_ns` sums observation/model/action selection; `schedule.json` has per-decision wall/CPU costs, and the result has summed inference CPU time. `checkpoint_loading_ns` is separate. |
 | Transformations | `action_00001_ns`, etc. wrap only each actual `action.apply`; `applied_actions.json` maps these phases to operations and parameters. |
 | Bufferization and LLVM lowering | `bufferization_ns` is the existing V5 helper, which also performs cleanup/vector lowering; `mlir_lowering_ns` applies the saved execution pass pipeline. |
+| OpenMP runtime initialization | `openmp_initialization_ns` restores the assigned mask and initializes/validates LLVM OpenMP separately from lowering and JIT materialization. |
 | LLVM/JIT and first invocation | `jit_engine_creation_ns`, then `llvm_jit_materialization_ns` performs symbol lookup without invoking main; `first_invoke_ns` records the subsequent first call. |
 | Framework compilation | Native graph construction/wrapper setup and TensorFlow graph tracing are separate. Inductor/XLA `lazy_compile_and_first_invoke_ns` includes compilation plus one execution; pure compiler time is not inferred from it. Eager has only setup and its first call. |
 
@@ -354,10 +379,14 @@ Reference support is intentionally checked: static ranked f32/f64/i32/i64/bool t
 
 The fixed selection was checked against the complete inventory: all 58 rows are unchanged inventory entries. Numerical reference checks passed for all 24 selected single operations, all 22 selected blocks, and the GIN/GAT full programs, comparing the actual MLIR computation with eager Torch and CPU XLA. These checks used one fixed test case and are not the full three-trial performance campaign.
 
-The previous generated results were cleared when adopting the eight-thread protocol. Verification artifacts are stored outside this experiment under `/scratch/ab13817/codex/cache/eight-thread-protocol-execution/` and `eight-thread-protocol-compilation/`, leaving this experiment's `results/` empty for fresh campaigns.
+Earlier protocol smoke artifacts are stored outside this experiment under `/scratch/ab13817/codex/cache/eight-thread-protocol-execution/` and `eight-thread-protocol-compilation/`. The populated execution campaigns in `results/execution/` predate the OpenMP placement fix and are preserved for reference. Rerun into a new output root to obtain corrected multi-core comparisons.
 
 All three Python files pass `py_compile`. The new default execution protocol passed on `add_112_15_15_15` for **all five backends and all three trials**: 15 workers, 75 latency samples, five warmups per worker, one-second/three-call profiling minima, numerical correctness and median aggregation were checked. Resume preserved worker logs, inputs, policy decisions, applied actions and saved scheduled MLIR, without rerunning measurements. CLI checks verified eight-thread defaults for both scripts and rejection of thread-count lists.
 
-MLIR baseline/RL compilation profiles passed on `gin_block_21` at eight threads, including cProfile, per-action/phase costs and JIT materialization followed by one invocation. They produced no steady-state latency or hardware windows. The fusion audit confirmed two fused clones while retaining evidence that the original producers remained. Static buffer counts retained four intermediate written buffer identities despite zero local allocation sites. Earlier checks also covered missing-weight and whole-worker timeout outcomes. No full category campaign has been launched with the revised protocol; smoke timings are not performance conclusions.
+MLIR baseline/RL compilation profiles passed on `gin_block_21` at eight threads, including cProfile, per-action/phase costs and JIT materialization followed by one invocation. They produced no steady-state latency or hardware windows. The fusion audit confirmed two fused clones while retaining evidence that the original producers remained. Static buffer counts retained four intermediate written buffer identities despite zero local allocation sites. Earlier checks also covered missing-weight and whole-worker timeout outcomes. These earlier checks did not verify actual multi-core placement; smoke timings are not campaign performance conclusions.
+
+The placement control in `results/openmp_control/result.json` passed on eight allocated physical cores: **7.48 average busy cores and 7.52× serial-to-parallel speedup**, with identical checksums and one correctly bound worker per core. Replaying the existing `gin_block_21` schedule through the fixed execution worker used **7.96 average busy cores**, with all eight active threads bound to distinct assigned CPUs and all three output cases matching the saved eager reference. The serial MLIR baseline used about one busy core, as expected. These diagnostic replays are stored beneath `results/openmp_control/gin_block_21/`; they do not replace the original campaign.
+
+Baseline and RL compilation workers also completed successfully with all eight LLVM places, including a newly generated/applied RL schedule, lowering, JIT materialization and first invocation. Their artifacts are under `results/openmp_control/compilation_gin_block_21/`. A separate negative control deliberately bypassed the fix in a fresh process: it discovered one place, emitted seven invalid-CPU warnings, used **0.98 busy cores**, and achieved **0.99× speedup**. Its expected failure is saved under `results/openmp_control/before_fix/` with `fix_disabled_for_negative_control: true`; this confirms that the control detects the original bug.
 
 GAT's baseline/eager/Inductor/XLA outputs agree, but this checkpoint's RL application fails on `operation_22: TPF(operation_21;0,16,2)` with a native MLIR diagnostic assertion. This is retained as a failed transformation and blocked RL measurement, with no invented speedup. The underlying evaluation/transform implementation was not changed. Other full models can be blocked by missing real weights, source-size limits or unsupported references, as documented above.

@@ -620,6 +620,35 @@ class FrameworkRunner:
         return evidence
 
 
+def initialize_mlir_openmp(cpus, threads):
+    """Initialize LLVM's runtime against the worker's original CPU allocation.
+
+    Importing V5 imports Torch/libgomp, which can bind the calling thread to its
+    first OMP_PLACE. LLVM/libomp otherwise mistakes that one-CPU mask for the
+    entire allocation and discards the other places. Restore only our assigned
+    CPUs, then initialize and validate the exact runtime used by the MLIR JIT.
+    The initial thread being bound to one place *after* this is normal.
+    """
+    before = sorted(os.sched_getaffinity(0))
+    os.sched_setaffinity(0, cpus)
+    libraries = os.environ.get('MLIR_SHARED_LIBS', '').split(',')
+    path = next((p for p in libraries if Path(p).name.startswith(('libomp.', 'libiomp5.'))), None)
+    if not path:
+        raise RuntimeError('MLIR_SHARED_LIBS must include the LLVM OpenMP runtime')
+    runtime = ctypes.CDLL(path)
+    runtime.omp_set_dynamic(0)
+    runtime.omp_set_num_threads(threads)
+    places = []
+    for i in range(runtime.omp_get_num_places()):
+        ids = (ctypes.c_int * runtime.omp_get_place_num_procs(i))()
+        runtime.omp_get_place_proc_ids(i, ids)
+        places.append(list(ids))
+    if places != [[cpu] for cpu in cpus] or runtime.omp_get_max_threads() != threads:
+        raise RuntimeError(f'Invalid LLVM OpenMP placement: requested {cpus}, discovered {places}')
+    return dict(runtime=str(Path(path).resolve()), affinity_before_restore=before,
+        assigned_cpus=list(cpus), places=places, max_threads=threads)
+
+
 class MLIRRunner:
     """Compile V5 IR with explicit input/output ownership and LLVM -O3.
 
@@ -641,6 +670,8 @@ class MLIRRunner:
         from rl_autoschedular_v5.transforms import transform_bufferize_and_lower_v
         from rl_autoschedular_v5.execution import _EXEC_PASS_PIPELINE
 
+        with progress.stage('openmp_initialization_ns'):
+            progress.result['openmp_placement'] = initialize_mlir_openmp(config['cpus'], config['threads'])
         self.out, self.np, self.current = out, np, None
         path = Path(config.get('ir_path') or (Path(config['run']) /
             ('methods/mlir_rl/scheduled.mlir' if method == 'mlir_rl' else 'prepared.mlir')))
