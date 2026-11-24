@@ -505,3 +505,11 @@ Other:
   training A, A', C, D, D+. Skips the already-completed data steps (torch-mlir build, export, validate, profile, units, split).
 - Shorter `--time` on the command line (overrides `#SBATCH`) so Slurm can backfill: blocks 2 d, units 12 h, config B 12 h, eval 1 d.
 - Remark: baselines are resumable (`baseline_fullmodels.py` skips entries > 0), so a job that hits its limit can be resubmitted.
+
+### 2026-11-25 — remark: export results (job 19563055)
+- 37 enabled models, 34 raw files. No file: convnext_atto, edgenext_xx_small (TorchFX -> Torch backend lowering failed),
+  wav2vec2_base_L2 (Torch backend -> linalg lowering failed).
+- levit_128s: `export_log.json` says failed but the pretty file exists and validated ok (819 ops, 25 units). The pretty
+  export succeeded; only the second, generic-form export raised GuardOnDataDependentSymNode, which overwrote the log
+  entry. The file is complete (written before the exception); it is kept.
+- Validation rejected 3: swin_tiny (dynamic dims), distilroberta and opt_125m (tm_tensor ops). 31 models -> 590 units.
