@@ -7,6 +7,10 @@ TORCH_MLIR_DIR=${TORCH_MLIR_DIR:-/scratch/mh8826/torch-mlir}
 TORCH_MLIR_BUILD=$(cat "$TORCH_MLIR_DIR.active_build" 2>/dev/null || true)   # written by setup_export_env.sh build
 TORCH_MLIR_PKG=$(ls -d "$TORCH_MLIR_BUILD"/python_packages/torch_mlir "$TORCH_MLIR_BUILD"/tools/torch-mlir/python_packages/torch_mlir 2>/dev/null | head -1 || true)
 export PYTHONPATH="${TORCH_MLIR_PKG}${PYTHONPATH:+:$PYTHONPATH}"   # empty for option A (wheel)
+# torch-mlir was compiled with GCC 12: it needs GCC 12's libstdc++ (GLIBCXX_3.4.29+), not /lib64's.
+# Only this folder is added (not the rest of .env, which belongs to MLIR-ENV).
+GCC_ROOT=$(grep '^GCC_ROOT=' .env | cut -d= -f2)
+export LD_LIBRARY_PATH="$GCC_ROOT/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export EXPORT_PY="$EXPORT_ENV/bin/python"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 # torch export / torch-mlir are CPU-threaded: use every allocated core, never an inherited OMP=1

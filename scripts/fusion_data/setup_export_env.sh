@@ -75,7 +75,9 @@ case "${1:-}" in
     ;;
   check)
     PKG=$( [[ -f $ACTIVE_BUILD_FILE ]] && torch_mlir_package "$(cat "$ACTIVE_BUILD_FILE")" || true )
-    PYTHONPATH="${PKG:-}" "$PY" -c "import torch, torch_mlir; from torch_mlir.fx import export_and_import; print('torch', torch.__version__, 'torch_mlir OK', torch_mlir.__file__)"
+    GCC_ROOT=${GCC_ROOT:-/share/apps/NYUAD5/gcc/12.2.0}   # torch-mlir needs GCC 12's libstdc++
+    LD_LIBRARY_PATH="$GCC_ROOT/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" PYTHONPATH="${PKG:-}" \
+        "$PY" -c "import torch, torch_mlir; from torch_mlir.fx import export_and_import; print('torch', torch.__version__, 'torch_mlir OK', torch_mlir.__file__)"
     ;;
   *) echo "usage: $0 find-commit | create-env | build | wheel YYYYMMDD | check"; exit 1 ;;
 esac

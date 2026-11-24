@@ -479,6 +479,16 @@ Other:
 - **Fix:** renamed it to `scripts/fusion_data/linalg_profile.py` (`git mv`) and updated `sbatch/profile.sbatch`. Checked: no other file in `scripts/fusion_data/` shares a name with a standard-library module.
 - Row A (19561726–28) and eval baselines (19561744) are unaffected and still queued. The "0 ok, 8093 failed" blocks baselines are from the old broken run (19539158); the queued job retries all of them with the fixed `.env`.
 
+## Third units-chain run (2026-11-24 ~22:55): export blocked by GCC 12 libstdc++
+- Build 19562701 OK. Export 19562705: 0/37 again. The `profile` clash is gone; now `import torch_mlir` failed with `/lib64/libstdc++.so.6: GLIBCXX_3.4.29 not found`.
+  - torch-mlir was compiled with GCC 12, but `_export_env.sh` never put GCC 12's `lib64` on `LD_LIBRARY_PATH` (unlike the MLIR-ENV jobs, which read `.env`).
+- **Fix:** `_export_env.sh` adds only `$GCC_ROOT/lib64` (read from `.env`), not the rest of `.env`, which belongs to MLIR-ENV. `setup_export_env.sh check` does the same.
+- **End-to-end check on the login node** (one small model, outputs in the session scratchpad only):
+  - `export.py --only resnet18` with the fixed env → `resnet18_linalg.mlir` (90 KB, 0 `tm_tensor` lines);
+  - `validate.py` (MLIR-ENV, LLVM 19.1.7 bindings + AstDumper + v6 features) → `[ok] resnet18: form=pretty ops=200`, no op dropped by the limits;
+  - `units.analyze` → 11 segments.
+  - So the full chain converter → agent works.
+
 ## Run outputs outside the git repo (2026-11-24, user request)
 - **How checkpoints are saved (unchanged code):**
   - `scripts/train/train.py` saves `{model, optimizer, step}` to `<results_dir>/models/model_<step>.pt` every 50 iterations (`step % 50 == 0`, line 206), plus a final checkpoint (line 224).
