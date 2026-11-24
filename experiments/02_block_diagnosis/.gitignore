@@ -1,0 +1,4 @@
+/results/
+*.npz
+*.npy
+__pycache__/

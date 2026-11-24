@@ -1,0 +1,12 @@
+gin_linalg	/scratch/mb10856/MLIR-RL/data/full_models	gin_linalg.mlir	21916481.0	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/gin_linalg.config.json
+gat_linalg	/scratch/mb10856/MLIR-RL/data/full_models	gat_linalg.mlir	49836754.0	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/gat_linalg.config.json
+mobilenet_v3_small_linalg	/scratch/mb10856/MLIR-RL/data/full_models	mobilenet_v3_small_linalg.mlir	75403315.0	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/mobilenet_v3_small_linalg.config.json
+model_mobile_net_v2	/scratch/mh8826/data/mlir_rl_v1_paper	model_mobile_net_v2.mlir	390160901	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/model_mobile_net_v2.config.json
+efficientnet_b0_linalg	/scratch/mb10856/MLIR-RL/data/full_models	efficientnet_b0_linalg.mlir	465749660.0	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/efficientnet_b0_linalg.config.json
+t5_linalg	/scratch/mb10856/MLIR-RL/data/full_models	t5_linalg.mlir	2002419505.5	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/t5_linalg.config.json
+model_res_net	/scratch/mh8826/data/mlir_rl_v1_paper	model_res_net.mlir	5420361806	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/model_res_net.config.json
+resnet50_linalg	/scratch/mb10856/MLIR-RL/data/full_models	resnet50_linalg.mlir	5521459873.5	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/resnet50_linalg.config.json
+resnext50_linalg	/scratch/mb10856/MLIR-RL/data/full_models	resnext50_linalg.mlir	5710871194.5	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/resnext50_linalg.config.json
+convnext_tiny_linalg	/scratch/mb10856/MLIR-RL/data/full_models	convnext_tiny_linalg.mlir	9640729977.0	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/convnext_tiny_linalg.config.json
+model_vgg	/scratch/mh8826/data/mlir_rl_v1_paper	model_vgg.mlir	21840348605	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/model_vgg.config.json
+vgg16_linalg	/scratch/mb10856/MLIR-RL/data/full_models	vgg16_linalg.mlir	24697781486.0	/scratch/mh8826/MLIR-RL/experiments/03_full_models/track_a/configs/vgg16_linalg.config.json

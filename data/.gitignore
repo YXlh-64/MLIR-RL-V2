@@ -9,3 +9,6 @@
 
 # Always track this .gitignore file
 !.gitignore
+
+# Fusion-layer control file (small, defines the A'-D+ training models); its outputs stay ignored
+!fusion_units/models.json

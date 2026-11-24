@@ -1,0 +1,191 @@
+{
+  "_doc": "Single source of truth for the evaluation set (decided 2026-11-24). Every model listed here is EXCLUDED from training data (units leakage guard). Models with runnable=true are evaluated (eval JSON generated from this file by scripts/fusion_data/eval_set_tools.py). survey = how model_survey builds the PyTorch version (null: not buildable from a config). file = stem of the file in data/full_models.",
+  "models": [
+    {
+      "name": "albert",
+      "file": "albert_linalg",
+      "runnable": false,
+      "reason": "tm_tensor.attention (not registered in the v6 MLIR); needs re-export with eager attention",
+      "survey": {
+        "category": "text_encoder",
+        "kind": "hf_text_encoder",
+        "repo": "albert/albert-base-v2"
+      }
+    },
+    {
+      "name": "bart",
+      "file": "bart_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "seq2seq",
+        "kind": "hf_seq2seq",
+        "repo": "facebook/bart-base"
+      }
+    },
+    {
+      "name": "bert",
+      "file": "bert_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "text_encoder",
+        "kind": "hf_text_encoder",
+        "repo": "google-bert/bert-base-uncased"
+      }
+    },
+    {
+      "name": "convnext_tiny",
+      "file": "convnext_tiny_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "cnn_modern",
+        "kind": "timm",
+        "repo": "timm/convnext_tiny.fb_in1k"
+      }
+    },
+    {
+      "name": "distilbert",
+      "file": "distilbert_linalg",
+      "runnable": false,
+      "reason": "tm_tensor.attention (not registered in the v6 MLIR); needs re-export with eager attention",
+      "survey": {
+        "category": "text_encoder",
+        "kind": "hf_text_encoder",
+        "repo": "distilbert/distilbert-base-uncased"
+      }
+    },
+    {
+      "name": "efficientnet_b0",
+      "file": "efficientnet_b0_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "cnn_depthwise_se",
+        "kind": "timm",
+        "repo": "timm/efficientnet_b0.ra_in1k"
+      }
+    },
+    {
+      "name": "gat",
+      "file": "gat_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": null
+    },
+    {
+      "name": "gin",
+      "file": "gin_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": null
+    },
+    {
+      "name": "gpt2",
+      "file": "gpt2_linalg",
+      "runnable": false,
+      "reason": "tm_tensor.attention (not registered in the v6 MLIR); needs re-export with eager attention",
+      "survey": {
+        "category": "decoder_gpt",
+        "kind": "hf_text_decoder",
+        "repo": "openai-community/gpt2"
+      }
+    },
+    {
+      "name": "llama3_2_1b",
+      "file": "llama3_2_1b_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "decoder_llama_gqa",
+        "kind": "hf_text_decoder",
+        "repo": "unsloth/Llama-3.2-1B"
+      }
+    },
+    {
+      "name": "mobilenet_v3_small",
+      "file": "mobilenet_v3_small_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "cnn_depthwise_se",
+        "kind": "timm",
+        "repo": "timm/mobilenetv3_small_100.lamb_in1k"
+      }
+    },
+    {
+      "name": "resnet50",
+      "file": "resnet50_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "cnn_residual",
+        "kind": "timm",
+        "repo": "timm/resnet50.tv_in1k"
+      }
+    },
+    {
+      "name": "resnext50",
+      "file": "resnext50_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "cnn_grouped",
+        "kind": "timm",
+        "repo": "timm/resnext50_32x4d.tv_in1k"
+      }
+    },
+    {
+      "name": "t5",
+      "file": "t5_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "seq2seq",
+        "kind": "hf_seq2seq",
+        "repo": "google-t5/t5-small"
+      }
+    },
+    {
+      "name": "vgg16",
+      "file": "vgg16_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "cnn_plain",
+        "kind": "timm",
+        "repo": "timm/vgg16.tv_in1k"
+      }
+    },
+    {
+      "name": "vit_b_16",
+      "file": "vit_b_16_linalg",
+      "runnable": true,
+      "reason": "",
+      "survey": {
+        "category": "vit",
+        "kind": "timm",
+        "repo": "timm/vit_base_patch16_224.augreg2_in21k_ft_in1k"
+      }
+    },
+    {
+      "name": "whisper_base",
+      "file": "whisper_base_linalg",
+      "runnable": false,
+      "reason": "tm_tensor.attention (not registered in the v6 MLIR); needs re-export with eager attention",
+      "survey": {
+        "category": "audio_encoder",
+        "kind": "hf_whisper_encoder",
+        "repo": "openai/whisper-base"
+      }
+    },
+    {
+      "name": "yolov8m",
+      "file": "yolov8m_linalg",
+      "runnable": false,
+      "reason": "dynamic dims (tensor<1x?x160x160xf32>): Execution needs static shapes; needs static re-export",
+      "survey": null
+    }
+  ]
+}

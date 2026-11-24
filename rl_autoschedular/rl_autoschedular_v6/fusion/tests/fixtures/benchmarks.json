@@ -1,0 +1,7 @@
+{
+  "diamond_ew": 1000,
+  "matmul_fill_bias": 1000,
+  "reduce_broadcast": 1000,
+  "transpose": 1000,
+  "residual_add": 1000
+}

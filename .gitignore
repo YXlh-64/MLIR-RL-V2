@@ -35,3 +35,27 @@ __pycache__/
 *.a
 *.so
 *.so.*
+
+# Model checkpoints (symlink to scratch storage) and other weight formats
+/checkpoints
+checkpoints/
+*.ckpt
+*.safetensors
+*.h5
+*.bin
+
+# Logs, Slurm outputs, arrays and pickles
+*.log
+*.out
+*.err
+slurm-*.out
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.parquet
+wandb/
+
+# Raw experiment outputs (hundreds of MB, tens of thousands of files); code and reports stay tracked
+/experiments/*/results/
+/experiments/**/__pycache__/
