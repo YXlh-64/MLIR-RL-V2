@@ -43,7 +43,8 @@ case "${1:-}" in
     source "$(conda info --base)/etc/profile.d/conda.sh"
     conda create -y -p "$EXPORT_ENV" python=3.11
     "$PY" -m pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.5.0" "torchvision==0.20.0"
-    "$PY" -m pip install "transformers==4.48.3" "timm==1.0.14" huggingface_hub numpy pybind11 nanobind \
+    # pybind11: LLVM 19's mlir/python/requirements.txt needs >=2.9,<=2.10.3 (3.x fails in IRCore.cpp)
+    "$PY" -m pip install "transformers==4.48.3" "timm==1.0.14" huggingface_hub numpy "pybind11==2.10.3" nanobind \
         cmake ninja "PyYAML" packaging
     ;;
   build)   # run inside build_torch_mlir.sbatch (compute node)

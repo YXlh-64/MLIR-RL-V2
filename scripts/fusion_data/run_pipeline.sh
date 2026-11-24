@@ -30,14 +30,17 @@ train() {    # train ROW DEPENDENCY  (explicit 8 x 8 CPU split via submit.sh)
     echo "train_$1 -> $LAST"
 }
 
-echo "$(date '+%F %T') ---- run_pipeline.sh (TORCH_MLIR_COMMIT=$TORCH_MLIR_COMMIT)" >> "$JOBS"
+MODE=${1:-all}   # all | --units-only (resubmit only the units chain: build ... train A', C, D, D+, config B)
+echo "$(date '+%F %T') ---- run_pipeline.sh $MODE (TORCH_MLIR_COMMIT=$TORCH_MLIR_COMMIT)" >> "$JOBS"
 
+if [[ $MODE != --units-only ]]; then
 # Row A: wait for any baselines_blocks job still running (it writes the same output file).
 running=$(squeue -u "$USER" -h -n fd-base-blocks -o %i | paste -sd: -)
 submit baselines_blocks ${running:+--dependency=afterany:$running} $SB/baselines_blocks.sbatch;  BB=$LAST
 submit split_blocks --dependency="afterok:$BB" $SB/step.sbatch \
     python scripts/data/split_json.py --input "$BLOCKS_BASE/base.json";                             SPB=$LAST
 train A "$SPB"
+fi
 
 # Units rows.
 submit build_torch_mlir --export=ALL $SB/build_torch_mlir.sbatch;                                  BUILD=$LAST
@@ -54,6 +57,6 @@ for row in A_prime C D D_plus; do train "$row" "$BJ"; done
 submit config_b --dependency="afterok:$UNI" $SB/config_b.sbatch
 
 # Full-model eval baselines (needed later by the *_eval_fullmodel configs).
-submit baselines_eval $SB/baselines_eval.sbatch
+[[ $MODE != --units-only ]] && submit baselines_eval $SB/baselines_eval.sbatch
 
 echo "All submitted; ids in $JOBS. Progress: bash scripts/fusion_data/status.sh"

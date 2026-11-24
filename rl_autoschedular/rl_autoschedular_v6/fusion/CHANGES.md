@@ -461,6 +461,16 @@ Other:
 - `submit.sh`: its info message now goes to stderr, so `--parsable` ids can be captured.
 - **Outputs for plotting/comparison** (unchanged code): each row's `results_dir` (`/scratch/mh8826/fusion_runs/fusion_<row>_agent`) holds `train_results.json`, `logs/` (per-iteration metrics, exec cache) and `models/model_<step>.pt` every 50 iterations. This is the layout `scripts/utils/report_training.py` and the plotting skill read.
 
+## Pipeline launch and pybind11 fix (2026-11-24 evening)
+- The user ran `run_pipeline.sh` at 21:24 (job ids in `/scratch/mh8826/fusion_runs/pipeline_jobs.txt`). The jobs survived an HPC disconnect: Slurm jobs do not depend on the login session.
+- **torch-mlir build 19561729 failed after 3 min**, but much later than before. All torch-mlir C++ compiled against LLVM 19 (284/321 steps), which confirms the `43506726` choice.
+  - It failed only in the Python bindings (`IRCore.cpp`): `pybind11.h: static assertion failed: def_property family does not currently support keep_alive`.
+  - Cause: `create-env` installed the latest pybind11 (3.1.0), while LLVM 19's `mlir/python/requirements.txt` requires `pybind11>=2.9.0, <=2.10.3` (MLIR-ENV has 2.11.1).
+  - Fix: `pybind11==2.10.3` installed in `mlir-export` (MLIR-ENV untouched) and pinned in `setup_export_env.sh create-env`.
+- Consequence: the units-chain jobs (compat 19561730, export 19561731, then validate, profile, units, splits, baselines_units, bench-json, train A′/C/D/D+, config B: 19561732–42) can never run. They wait on the failed build (`DependencyNeverSatisfied`).
+- Unaffected and still pending: row A (19561726 baselines_blocks, 19561727 split_blocks, 19561728 train A) and 19561744 baselines_eval.
+- `run_pipeline.sh --units-only`: new mode that resubmits only the units chain (build → … → train A′, C, D, D+, config B) without duplicating row A or the eval baselines.
+
 ## Run outputs outside the git repo (2026-11-24, user request)
 - **How checkpoints are saved (unchanged code):**
   - `scripts/train/train.py` saves `{model, optimizer, step}` to `<results_dir>/models/model_<step>.pt` every 50 iterations (`step % 50 == 0`, line 206), plus a final checkpoint (line 224).
