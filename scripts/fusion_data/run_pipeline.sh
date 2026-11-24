@@ -31,7 +31,26 @@ train() {    # train ROW DEPENDENCY  (explicit 8 x 8 CPU split via submit.sh)
 }
 
 MODE=${1:-all}   # all | --units-only (resubmit only the units chain: build ... train A', C, D, D+, config B)
+                 #     | --after-data (data steps already done: baselines + training only, shorter time limits)
 echo "$(date '+%F %T') ---- run_pipeline.sh $MODE (TORCH_MLIR_COMMIT=$TORCH_MLIR_COMMIT)" >> "$JOBS"
+
+if [[ $MODE == --after-data ]]; then
+# Export/validate/units/split already COMPLETED (data/fusion_units/units + split files on disk).
+# Shorter --time (overrides #SBATCH) so Slurm can backfill; baselines resume (entries > 0 are skipped).
+[[ -n $(ls data/fusion_units/units/*_unit_*.mlir 2>/dev/null | head -1) ]] || { echo "no units yet: run without --after-data"; exit 1; }
+submit baselines_blocks --time=2-00:00:00 $SB/baselines_blocks.sbatch;                             BB=$LAST
+submit split_blocks --dependency="afterok:$BB" $SB/step.sbatch \
+    python scripts/data/split_json.py --input "$BLOCKS_BASE/base.json";                             SPB=$LAST
+train A "$SPB"
+submit baselines_units --time=12:00:00 $SB/baselines_units.sbatch;                                 BU=$LAST
+submit bench_json --dependency="afterok:$BU" $SB/step.sbatch \
+    python scripts/fusion_data/split.py bench-json --times "$UNITS_BASE/all_units.json";            BJ=$LAST
+for row in A_prime C D D_plus; do train "$row" "$BJ"; done
+submit config_b --time=12:00:00 $SB/config_b.sbatch
+submit baselines_eval --time=1-00:00:00 $SB/baselines_eval.sbatch
+echo "All submitted; ids in $JOBS. Progress: bash scripts/fusion_data/status.sh"
+exit 0
+fi
 
 if [[ $MODE != --units-only ]]; then
 # Row A: wait for any baselines_blocks job still running (it writes the same output file).

@@ -499,3 +499,9 @@ Other:
 - **Not moved:** the baseline JSONs (`results/fusion_units_results/baselines/...`) and the unit data (`data/fusion_units/...`) stay at their repo-relative paths. `results/` and `data/` are git-ignored there, and the pipeline scripts use those paths.
 - `fusion/tests/test_configs.py`: new `test_results_outside_the_repo`, which checks that every config's `results_dir` is under `/scratch/mh8826/fusion_runs/` and not inside the repo. **Not run.**
 - `scripts/fusion_data/COMMANDS.md`: eval `--checkpoints-dir` paths and the `experiments.json` example updated, and a note on checkpoints and `--resume` added.
+
+### 2026-11-25 — run_pipeline.sh --after-data
+- New mode `--after-data`: resubmits only baselines (blocks, units, eval), config B, split_blocks, bench_json and
+  training A, A', C, D, D+. Skips the already-completed data steps (torch-mlir build, export, validate, profile, units, split).
+- Shorter `--time` on the command line (overrides `#SBATCH`) so Slurm can backfill: blocks 2 d, units 12 h, config B 12 h, eval 1 d.
+- Remark: baselines are resumable (`baseline_fullmodels.py` skips entries > 0), so a job that hits its limit can be resubmitted.
