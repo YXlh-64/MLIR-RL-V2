@@ -13,8 +13,9 @@ else
 fi
 squeue -u "$USER" -h -o "%.10i %.22j %.8T %.10M %R" | grep -v interactive
 
-count() {   # count FILE: ok / failed entries of a {name: ns} baseline JSON
-    python3 -c "import json,sys; d=json.load(open(sys.argv[1])); ok=sum(v>0 for v in d.values()); print(f'{ok} ok, {len(d)-ok} failed, {len(d)} total')" "$1" 2>/dev/null || echo "not yet"
+count() {   # count FILE: ok / failed entries of a {name: ns} baseline JSON, and when it was last written
+    python3 -c "import json,sys; d=json.load(open(sys.argv[1])); ok=sum(v>0 for v in d.values()); print(f'{ok} ok, {len(d)-ok} failed, {len(d)} total', end='')" "$1" 2>/dev/null \
+        && echo "  (last written $(date -r "$1" '+%F %T'))" || echo "not yet"
 }
 echo; echo "== data"
 echo "raw exports      : $(ls data/fusion_units/raw/*_linalg.mlir 2>/dev/null | wc -l) / $(python3 -c "import json; print(sum(m['enabled'] for m in json.load(open('data/fusion_units/models.json'))['models']))")"
