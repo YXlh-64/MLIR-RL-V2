@@ -11,7 +11,7 @@ Outputs under data/fusion_units/profile/: cand/, eval/, weights.json, report/.
 Idempotent: an existing cand/ or eval/ profile is reused unless --force.
 
 Usage (repo root, any Python 3.9+; the eval files are large, run it as a job):
-    python scripts/fusion_data/profile.py [--full-models data/full_models] [--force]
+    python scripts/fusion_data/linalg_profile.py [--full-models data/full_models] [--force]
 """
 
 import argparse

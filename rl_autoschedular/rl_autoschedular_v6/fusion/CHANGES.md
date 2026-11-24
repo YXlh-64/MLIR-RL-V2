@@ -301,7 +301,7 @@ Added in `scripts/fusion_data/`. All are idempotent, driven only by the control 
   - Skips existing files unless `--force`.
 - `validate.py` (MLIR-ENV, `CONFIG_FILE_PATH=config/fusion/A_prime.json`): no `tm_tensor`, no dynamic dims, bindings parse (generic form as fallback), AstDumper + features, and no op dropped by the limits.
   - Writes `validation.json`. A model is re-checked only if its file changed.
-- `profile.py`: runs `profile_linalg.py` on the validated raw files and on the runnable eval files, then `check_suitability.py --weights` → `profile/report/report.md`.
+- `linalg_profile.py` (named `profile.py` until 2026-11-24, see below): runs `profile_linalg.py` on the validated raw files and on the runnable eval files, then `check_suitability.py --weights` → `profile/report/report.md`.
 - `build_units.py`: fusion M3 on enabled and validated models, with the leakage guard **required** (fails if `eval_set` is empty).
   - Writes `units/<model>_unit_<k>.mlir`, `units/units_manifest.json` (updated after each model) and `sampling_weights.json`.
   - It never deletes anything: leftover unit files without a manifest entry stop the run with a message.
@@ -470,6 +470,14 @@ Other:
 - Consequence: the units-chain jobs (compat 19561730, export 19561731, then validate, profile, units, splits, baselines_units, bench-json, train A′/C/D/D+, config B: 19561732–42) can never run. They wait on the failed build (`DependencyNeverSatisfied`).
 - Unaffected and still pending: row A (19561726 baselines_blocks, 19561727 split_blocks, 19561728 train A) and 19561744 baselines_eval.
 - `run_pipeline.sh --units-only`: new mode that resubmits only the units chain (build → … → train A′, C, D, D+, config B) without duplicating row A or the eval baselines.
+
+## Second units-chain run (2026-11-24 ~22:30): build OK, export blocked by my script name
+- **torch-mlir build 19562290: COMPLETED** (1 min 46, an incremental build after the pybind11 fix). `/scratch/mh8826/torch-mlir.active_build` → `build-43506726`. The converter now works against LLVM 19.1.7; no more torch-mlir work is needed.
+- **Export (19562292) and compat test (19562291): 0 models converted.** Every model failed with `AttributeError: module 'profile' has no attribute 'run'`, or `Failed to import transformers…timm_wrapper` caused by the same thing.
+  - Cause (my bug): `scripts/fusion_data/profile.py` shadowed Python's standard `profile` module. Python puts the script's own folder first on `sys.path`, so torch/transformers' `import cProfile` (which imports `profile`) loaded my file.
+  - `validate` then found nothing, and `units` (19562295) and `profile` (19562294) failed with `FileNotFoundError: data/fusion_units/validation.json`. Everything downstream is stuck with `DependencyNeverSatisfied`.
+- **Fix:** renamed it to `scripts/fusion_data/linalg_profile.py` (`git mv`) and updated `sbatch/profile.sbatch`. Checked: no other file in `scripts/fusion_data/` shares a name with a standard-library module.
+- Row A (19561726–28) and eval baselines (19561744) are unaffected and still queued. The "0 ok, 8093 failed" blocks baselines are from the old broken run (19539158); the queued job retries all of them with the fixed `.env`.
 
 ## Run outputs outside the git repo (2026-11-24, user request)
 - **How checkpoints are saved (unchanged code):**

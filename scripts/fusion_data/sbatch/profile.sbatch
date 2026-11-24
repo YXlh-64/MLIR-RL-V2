@@ -11,4 +11,4 @@
 # Read data/fusion_units/profile/report/report.md (section 4b). The eval files are large (GBs).
 set -eo pipefail   # no -u: conda activate reads unset variables
 source scripts/fusion_data/sbatch/_env.sh
-python scripts/fusion_data/profile.py "$@"
+python scripts/fusion_data/linalg_profile.py "$@"
