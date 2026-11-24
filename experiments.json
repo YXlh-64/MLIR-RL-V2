@@ -133,6 +133,60 @@
       "seed": 2026,
       "state": "running",
       "description": "Verify TensorFlow CPU 2.21.0 and actual XLA compilation in the mlir Conda environment, then representative execution workers against saved reference outputs."
+    },
+    {
+      "name": "fusion_A",
+      "config": "config/fusion/A.json",
+      "results_dir": "/scratch/mh8826/fusion_runs/fusion_A_agent",
+      "mode": "train",
+      "seed": 42,
+      "state": "pending",
+      "description": "Fusion-layer ablation row A: status-quo blocks (data/ops_and_blocks), fusion layer off. v6, limits 12, from scratch, 8x8 CPU split. See rl_autoschedular_v6/fusion/CHANGES.md."
+    },
+    {
+      "name": "fusion_A_prime",
+      "config": "config/fusion/A_prime.json",
+      "results_dir": "/scratch/mh8826/fusion_runs/fusion_A_prime_agent",
+      "mode": "train",
+      "seed": 42,
+      "state": "pending",
+      "description": "Fusion-layer ablation row A_prime: new closed units (data/fusion_units/units), weighted sampling, fusion layer off. v6, limits 12, from scratch, 8x8 CPU split. See rl_autoschedular_v6/fusion/CHANGES.md."
+    },
+    {
+      "name": "fusion_B",
+      "config": "config/fusion/B.json",
+      "results_dir": "/scratch/mh8826/fusion_runs/fusion_B_agent",
+      "mode": "none",
+      "seed": 42,
+      "state": "pending",
+      "description": "Fusion-layer ablation row B: fusion layer alone, no agent (prefused units timed by config_b.sbatch). v6, limits 12, from scratch, 8x8 CPU split. See rl_autoschedular_v6/fusion/CHANGES.md."
+    },
+    {
+      "name": "fusion_C",
+      "config": "config/fusion/C.json",
+      "results_dir": "/scratch/mh8826/fusion_runs/fusion_C_agent",
+      "mode": "train",
+      "seed": 42,
+      "state": "pending",
+      "description": "Fusion-layer ablation row C: units + green prefusion. v6, limits 12, from scratch, 8x8 CPU split. See rl_autoschedular_v6/fusion/CHANGES.md."
+    },
+    {
+      "name": "fusion_D",
+      "config": "config/fusion/D.json",
+      "results_dir": "/scratch/mh8826/fusion_runs/fusion_D_agent",
+      "mode": "train",
+      "seed": 42,
+      "state": "pending",
+      "description": "Fusion-layer ablation row D: units + prefusion + producer selection. v6, limits 12, from scratch, 8x8 CPU split. See rl_autoschedular_v6/fusion/CHANGES.md."
+    },
+    {
+      "name": "fusion_D_plus",
+      "config": "config/fusion/D_plus.json",
+      "results_dir": "/scratch/mh8826/fusion_runs/fusion_D_plus_agent",
+      "mode": "train",
+      "seed": 42,
+      "state": "pending",
+      "description": "Fusion-layer ablation row D_plus: units + prefusion + producer selection + tile guard. v6, limits 12, from scratch, 8x8 CPU split. See rl_autoschedular_v6/fusion/CHANGES.md."
     }
   ]
 }

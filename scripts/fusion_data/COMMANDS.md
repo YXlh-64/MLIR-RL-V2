@@ -1,9 +1,22 @@
 # From the current state to training every ablation row (A, A′, B, C, D, D+)
 
+## Short path (state of 2026-11-24 morning): one command
+Already done overnight: tests, configs download, `data/full_models` link, `.env` fix, torch 2.5 in `mlir-export`,
+`experiments.json` entries, commit on branch `fusion-v6`. So, from the repo root, in a **fresh** shell
+(do not `source scripts/analysis/gap1/env.sh` first):
+```bash
+cd /scratch/mh8826/MLIR-RL
+git push -u origin fusion-v6                       # the push needs your GitHub login
+bash scripts/fusion_data/run_pipeline.sh           # submits every job of every row, chained with dependencies
+bash scripts/fusion_data/status.sh                 # progress, any time
+```
+`run_pipeline.sh` = steps 3–6 below, automated. Use the step-by-step sections only to redo one part.
+
+---
+
 All commands run from the repo root `/scratch/mh8826/MLIR-RL`. Lines marked **login** are light
 (seconds, or network-only). Everything heavy is an `sbatch` job on `--partition=compute --constraint=bergamo`,
 the node type that `train.sh`/`eval.sh` already use (AMD EPYC 9754).
-Nothing below has been run by Claude.
 
 ## 0. Checks and one-time setup (login)
 ```bash
@@ -20,8 +33,8 @@ mkdir -p logs
 
 ## 1. Export environment (after you approve option B; see CHANGES.md Part 2)
 ```bash
-bash scripts/fusion_data/setup_export_env.sh find-commit         # login (network): note the torch-mlir sha for llvm cd708029
-export TORCH_MLIR_COMMIT=<sha from torch_mlir_llvm_bumps.txt>
+# our LLVM is 19.1.7 (release/19.x): torch-mlir 43506726 (2024-08-07) + torch 2.5.0, see CHANGES.md
+export TORCH_MLIR_COMMIT=43506726853b35ae9c253aa1d1c61b76ad9b4c13
 bash scripts/fusion_data/setup_export_env.sh create-env          # login (network): conda env mlir-export
 sbatch --export=ALL scripts/fusion_data/sbatch/build_torch_mlir.sbatch
 bash scripts/fusion_data/setup_export_env.sh check               # login, after the build job

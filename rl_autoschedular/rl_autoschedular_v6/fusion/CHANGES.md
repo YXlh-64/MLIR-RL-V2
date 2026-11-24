@@ -423,6 +423,44 @@ Remarks:
 - All rows use the same split, so the ablation comparisons are unaffected.
 - Nothing was run.
 
+## Overnight session (2026-11-24, ~04:00–04:40): git, root causes, one-command pipeline
+Git:
+- Committed everything on a new branch **`fusion-v6`** (from `gap1`; `gap1` and `main` untouched): commit `e492ebc`, 190 files (code, configs, reports, control file).
+- `.gitignore`: `/experiments/*/results/` (340 MB / 16k files of raw outputs) and `/experiments/**/__pycache__/` are now ignored. `data/.gitignore` tracks `fusion_units/models.json`. Your earlier uncommitted `.gitignore` additions (checkpoints, logs, weights) were committed with it. No secrets or files > 0.5 MB were added.
+- **Push failed:** no GitHub credentials in this shell (HTTPS remote, no `gh`, SSH key not registered). Run `git push -u origin fusion-v6` from your VS Code terminal.
+
+Root cause 1, `.env` broke every MLIR job (baselines, training, eval):
+- `.env` used bash's `${VAR:+:${VAR}}` syntax on the `PYTHONPATH` and `LD_LIBRARY_PATH` lines. python-dotenv does not support it.
+- `baseline_fullmodels.py`, `train.py` and `eval.py` call `load_dotenv(override=True)`, which turned GCC 12's lib path into `…/gcc/12.2.0/lib64${LD_LIBRARY_PATH` and `…/lib64}` (both invalid).
+- Every MLIR subprocess then loaded `/lib64/libstdc++.so.6`: `GLIBCXX_3.4.29 not found`. Row A's first baseline job (19539158) failed on all files this way.
+- **Fixed `.env`** (backup `.env.bak-2026-11-24`): both lines now use plain `…:${VAR}`, which bash and python-dotenv both understand. Verified: after `load_dotenv`, no mangled entries, and a child process imports MLIR and v6.
+
+Root cause 2, why both torch-mlir builds failed:
+- **The agent's LLVM is release 19.1.7** (`release/19.x` @ `cd708029`, tag `llvmorg-19.1.7`; the clone is shallow). It branched from mainline in late July 2024; "2025-01-14" is only the date of a branch backport.
+- The January 2025 torch-mlir commits need newer MLIR (`mlir/Dialect/Quant/IR/…`, `Conv2DNchwFchwQOp`, `applyPatternsGreedily`); our LLVM has the old `mlir/Dialect/Quant/QuantTypes.h`.
+- **New torch-mlir: `43506726853b35ae9c253aa1d1c61b76ad9b4c13`** (2024-08-07), the last commit before torch-mlir's first LLVM bump after the 19.x branch point.
+  - It pins llvm `d16b21b` (June 2024), uses the old Quant header, and uses neither `Conv2DNchwFchwQOp` nor `applyPatternsGreedily`.
+  - It pins `torch==2.5.0.dev20240804`, so the `mlir-export` env now has **torch 2.5.0 / torchvision 0.20.0** (installed tonight; MLIR-ENV untouched).
+- `setup_export_env.sh` rewritten accordingly: header explains the choice, `create-env` pins torch 2.5.0, `find-commit` lists the 2024 bumps.
+  - Each commit now builds into its own `build-<sha8>`, and a successful build writes `/scratch/mh8826/torch-mlir.active_build`, which `check` and `_export_env.sh` read. No build folder ever needs deleting.
+
+Other:
+- `model_survey/download_models.py` run on the control file (login, network, config.json only): **all 39 repos OK**, including the proposed resnet26 (`timm/resnet26.bt_in1k`) and bert_L4_H768.
+- `data/full_models` symlink → `/scratch/mh8826/data/full_models` created; the eval configs need it.
+- `experiments.json`: registered `fusion_A`, `fusion_A_prime`, `fusion_B`, `fusion_C`, `fusion_D`, `fusion_D_plus` (state `pending`).
+- Tests before the commit: 133 passed, 1 skipped (`eval_fullmodel.json` not generated yet); `py_compile` and `bash -n` clean.
+
+**What I could not do:** the permission classifier denied `sbatch` and `scancel` for me, so I could not cancel the broken job, rebuild torch-mlir, or launch anything. Instead I added a one-command driver:
+- `scripts/fusion_data/run_pipeline.sh` submits everything with Slurm dependencies (`afterok`):
+  - row A: `baselines_blocks` → `split_json` → train A;
+  - units: build → export → validate → (profile) → units → split → `baselines_units` → `bench-json` → train A′, C, D, D+ (+ `config_b` after units);
+  - `baselines_eval`, independent.
+  - It waits (`afterany`) for any `fd-base-blocks` job still running. All job ids go to `/scratch/mh8826/fusion_runs/pipeline_jobs.txt`.
+- `scripts/fusion_data/sbatch/step.sbatch`: a light dependent step (split, bench-json, split_json) in the job environment.
+- `scripts/fusion_data/status.sh`: read-only progress (job states, data counts, baseline ok/failed, checkpoints per row).
+- `submit.sh`: its info message now goes to stderr, so `--parsable` ids can be captured.
+- **Outputs for plotting/comparison** (unchanged code): each row's `results_dir` (`/scratch/mh8826/fusion_runs/fusion_<row>_agent`) holds `train_results.json`, `logs/` (per-iteration metrics, exec cache) and `models/model_<step>.pt` every 50 iterations. This is the layout `scripts/utils/report_training.py` and the plotting skill read.
+
 ## Run outputs outside the git repo (2026-11-24, user request)
 - **How checkpoints are saved (unchanged code):**
   - `scripts/train/train.py` saves `{model, optimizer, step}` to `<results_dir>/models/model_<step>.pt` every 50 iterations (`step % 50 == 0`, line 206), plus a final checkpoint (line 224).

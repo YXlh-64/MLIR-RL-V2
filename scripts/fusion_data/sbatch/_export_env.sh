@@ -4,7 +4,8 @@ PROJECT_ROOT="${SLURM_SUBMIT_DIR:?submit from the repo root}"
 cd "$PROJECT_ROOT"
 EXPORT_ENV=${EXPORT_ENV:-$HOME/.conda/envs/mlir-export}
 TORCH_MLIR_DIR=${TORCH_MLIR_DIR:-/scratch/mh8826/torch-mlir}
-TORCH_MLIR_PKG=$(ls -d "$TORCH_MLIR_DIR"/build/python_packages/torch_mlir "$TORCH_MLIR_DIR"/build/tools/torch-mlir/python_packages/torch_mlir 2>/dev/null | head -1 || true)
+TORCH_MLIR_BUILD=$(cat "$TORCH_MLIR_DIR.active_build" 2>/dev/null || true)   # written by setup_export_env.sh build
+TORCH_MLIR_PKG=$(ls -d "$TORCH_MLIR_BUILD"/python_packages/torch_mlir "$TORCH_MLIR_BUILD"/tools/torch-mlir/python_packages/torch_mlir 2>/dev/null | head -1 || true)
 export PYTHONPATH="${TORCH_MLIR_PKG}${PYTHONPATH:+:$PYTHONPATH}"   # empty for option A (wheel)
 export EXPORT_PY="$EXPORT_ENV/bin/python"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1

@@ -21,5 +21,5 @@ if (( EXEC_WORKERS * OMP_NUM_THREADS != cpus )); then
     echo "EXEC_WORKERS ($EXEC_WORKERS) x OMP_NUM_THREADS ($OMP_NUM_THREADS) != --cpus-per-task ($cpus); set FUSION_EXEC_WORKERS / FUSION_OMP_THREADS"
     exit 1
 fi
-echo "submitting with EXEC_WORKERS=$EXEC_WORKERS OMP_NUM_THREADS=$OMP_NUM_THREADS on $cpus cores"
+echo "submitting with EXEC_WORKERS=$EXEC_WORKERS OMP_NUM_THREADS=$OMP_NUM_THREADS on $cpus cores" >&2   # stderr: keeps --parsable output clean
 exec sbatch --export="ALL,EXEC_WORKERS=$EXEC_WORKERS,OMP_NUM_THREADS=$OMP_NUM_THREADS,MKL_NUM_THREADS=$MKL_NUM_THREADS,OPENBLAS_NUM_THREADS=$OPENBLAS_NUM_THREADS" "$@"
