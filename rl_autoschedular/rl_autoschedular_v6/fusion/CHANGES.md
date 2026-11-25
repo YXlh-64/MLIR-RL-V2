@@ -513,3 +513,15 @@ Other:
   export succeeded; only the second, generic-form export raised GuardOnDataDependentSymNode, which overwrote the log
   entry. The file is complete (written before the exception); it is kept.
 - Validation rejected 3: swin_tiny (dynamic dims), distilroberta and opt_125m (tm_tensor ops). 31 models -> 590 units.
+
+### 2026-11-26 — full-model eval comparison (latest checkpoints vs v5_model_1200)
+- `scripts/fusion_data/eval_compare.sh`: picks the latest checkpoint of A, A', C, D, D+ at submission time, plus
+  `/scratch/mh8826/checkpoints/v5_model_1200.pt` (symlinked as `fusion_runs/v5_model_1200/models/model_1200.pt`;
+  original untouched), submits one eval job per agent and a plot job after all of them (afterany).
+- `scripts/fusion_data/sbatch/eval_fullmodel.sbatch`: same logic as `scripts/eval/eval_fullmodel.sh` (one eval.py
+  per model, private config/results_dir, merge) but with `_env.sh`. Remark: `eval_fullmodel.sh` cannot run here:
+  it does `source "$CONDA_ENV"` (a directory for us) and writes logs to `/scratch/mb10856/...`. Not modified.
+- `config/fusion/v5_1200_eval_fullmodel.json`: copy of `A_eval_fullmodel.json` (v6, fusion off = v5; same network
+  shapes as v5_model_1200, checked: 111 tensors, identical) with its own `results_dir`.
+- `scripts/fusion_data/plot_eval_compare.py`: speedup = baseline / agent time per model; heatmap + geomean on the
+  models every agent ran; `comparison.{png,md,csv}`. Failures are shown, not dropped.
