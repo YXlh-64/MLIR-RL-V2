@@ -4,6 +4,9 @@
 #   bash scripts/fusion_data/eval_compare.sh
 #   bash scripts/fusion_data/eval_compare.sh --v5-from <earlier OUT dir> [<its v5 eval job id, if still running>]
 #        (reuse an earlier v5_model_1200 result instead of evaluating it again)
+# Size per eval job (env): EVAL_CPUS (default 64), EVAL_MEM (default 256G), EVAL_TIME (default 1-00:00:00).
+# Each model always runs with 8 OpenMP threads (as the baselines were timed); EVAL_CPUS/8 models run at once.
+#   EVAL_CPUS=16 EVAL_MEM=48G EVAL_TIME=14:00:00 bash scripts/fusion_data/eval_compare.sh ...
 # Training keeps running: the checkpoint step is fixed at submission time.
 # Output: /scratch/mh8826/fusion_runs/eval_compare/<timestamp>/  (one JSON per agent, logs, plot, table)
 set -eo pipefail
@@ -31,11 +34,16 @@ for row in A A_prime C D D_plus; do
     add "$row" "config/fusion/${row}_eval_fullmodel.json" "$dir" "$step"
 done
 
+EVAL_CPUS=${EVAL_CPUS:-64}; EVAL_MEM=${EVAL_MEM:-256G}; EVAL_TIME=${EVAL_TIME:-1-00:00:00}
+(( EVAL_CPUS % 8 == 0 )) || { echo "EVAL_CPUS must be a multiple of 8"; exit 1; }
+PARALLEL=$(( EVAL_CPUS / 8 ))
+export FUSION_OMP_THREADS=8 FUSION_EXEC_WORKERS=$PARALLEL
 ids=()
 while IFS=$'\t' read -r label cfg dir step res; do
     [[ -n $V5_FROM && $label == v5_model_1200 ]] && continue
-    id=$(bash scripts/fusion_data/submit.sh --parsable --cpus-per-task=64 --job-name="eval-$label" \
-         scripts/fusion_data/sbatch/eval_fullmodel.sbatch "$cfg" "$dir" "$step" "$res")
+    id=$(bash scripts/fusion_data/submit.sh --parsable --cpus-per-task="$EVAL_CPUS" --mem="$EVAL_MEM" \
+         --time="$EVAL_TIME" --job-name="eval-$label" \
+         scripts/fusion_data/sbatch/eval_fullmodel.sbatch "$cfg" "$dir" "$step" "$res" "$PARALLEL")
     echo "eval $label (checkpoint $step) -> $id"; ids+=("$id")
     echo "$(date '+%F %T') eval_$label $id" >> "$RUNS/pipeline_jobs.txt"
 done < "$OUT/agents.tsv"

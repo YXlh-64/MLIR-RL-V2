@@ -537,3 +537,7 @@ Other:
   now use `eval_fullmodel_no_llama.json` (12 models); revert by pointing them back at `eval_fullmodel.json`.
   v5_model_1200 eval (job 19577368, cancelled by the user while on llama) saved from its tmp dir to
   `fusion_runs/eval_compare/20261126_0301/v5_model_1200.json` (+ logs).
+- 2026-11-26: `eval_compare.sh` takes EVAL_CPUS / EVAL_MEM / EVAL_TIME (defaults 64 / 256G / 1 day) so eval jobs
+  fit partly used nodes. Each model still runs with OMP 8 threads (same as the baselines); EVAL_CPUS/8 models
+  run in parallel. Planned use: 16 cores, 48G, 14 h (2 models at a time; v5 eval per-model times: bert ~6.4 h,
+  vit_b_16 ~5 h, bart ~2.5 h, the rest < 1.2 h each).
