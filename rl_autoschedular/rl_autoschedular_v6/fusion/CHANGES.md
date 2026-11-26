@@ -529,3 +529,4 @@ Other:
   waits for that job id). `eval_fullmodel.sbatch` FAIL lines now report eval.py's real exit code (was always 0).
 - Remark: evals were stuck on `AssocGrpCpuLimit` (group CPU cap: 5 trainings x 64 cores + 1 eval fill it), and
   `eval_compare.sh` had been run twice (03:01 and 14:11), doubling the eval jobs.
+- 2026-11-26: `scripts/fusion_data/plot_training.py`: training curves of A-D+ from logs (no job) -> `fusion_runs/plots/training_curves.png`, `training_summary.md`. Partial v5_model_1200 eval table (11 finished models of job 19577368, from its tmp dir) -> `fusion_runs/plots/v5_model_1200_partial_eval.md`.
