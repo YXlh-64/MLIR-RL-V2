@@ -71,7 +71,7 @@
   "results_dir": "/scratch/mh8826/fusion_runs/fusion_A_agent_fullmodel_eval",
   "implementation": "rl_autoschedular_v6",
   "json_file": "results/mlir_rl_v1_paper_results/baselines/mlir/base_train.json",
-  "eval_json_file": "results/fusion_units_results/baselines/mlir/eval_fullmodel.json",
+  "eval_json_file": "results/fusion_units_results/baselines/mlir/eval_fullmodel_no_llama.json",
   "dask_node_count": 16,
   "fusion": {
     "units": {

@@ -530,3 +530,10 @@ Other:
 - Remark: evals were stuck on `AssocGrpCpuLimit` (group CPU cap: 5 trainings x 64 cores + 1 eval fill it), and
   `eval_compare.sh` had been run twice (03:01 and 14:11), doubling the eval jobs.
 - 2026-11-26: `scripts/fusion_data/plot_training.py`: training curves of A-D+ from logs (no job) -> `fusion_runs/plots/training_curves.png`, `training_summary.md`. Partial v5_model_1200 eval table (11 finished models of job 19577368, from its tmp dir) -> `fusion_runs/plots/v5_model_1200_partial_eval.md`.
+- 2026-11-26: llama3_2_1b left out of the full-model evals. Its greedy eval applies ~1000 ops' transformations,
+  each in a fresh process that loads the whole model (~19 GB RSS); after 3+ h a TiledFusion on operation_984 hit an
+  MLIR assertion (PybindAdaptors.h:623) and the job was still running at 8.5 h. Because eval_fullmodel.sbatch writes
+  its result only at the end, a timeout on llama would lose the other 12 models. All `*_eval_fullmodel.json` configs
+  now use `eval_fullmodel_no_llama.json` (12 models); revert by pointing them back at `eval_fullmodel.json`.
+  v5_model_1200 eval (job 19577368, cancelled by the user while on llama) saved from its tmp dir to
+  `fusion_runs/eval_compare/20261126_0301/v5_model_1200.json` (+ logs).
