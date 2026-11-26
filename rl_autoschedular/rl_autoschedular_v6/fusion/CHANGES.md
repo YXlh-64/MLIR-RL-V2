@@ -541,3 +541,13 @@ Other:
   fit partly used nodes. Each model still runs with OMP 8 threads (same as the baselines); EVAL_CPUS/8 models
   run in parallel. Planned use: 16 cores, 48G, 14 h (2 models at a time; v5 eval per-model times: bert ~6.4 h,
   vit_b_16 ~5 h, bart ~2.5 h, the rest < 1.2 h each).
+
+### 2026-11-26 — new row D_blocks (fusion + producer ranking on the blocks data)
+- `config/fusion/D_blocks.json`: A.json (ops_and_blocks data, blocks baselines) + `prefuse` + `producer_select`,
+  `nb_iterations` 1200 (same as the reference checkpoint v5_model_1200), results in
+  `/scratch/mh8826/fusion_runs/fusion_D_blocks_agent` (checkpoints every 50 it. + model_1200.pt at the end).
+  No sampling_weights (those are for units). `D_blocks_eval_fullmodel.json`: its full-model eval twin.
+- Smoke test (login/interactive node, 40 random blocks): loads in 9 s, prefuse ops 181 -> 106,
+  producer selection changed 0 initial producers (blocks rarely have several data producers; the full count is
+  printed at job start). Expected start-up for 8,093 blocks: ~30 min.
+- User cancelled all pending evals (eval_compare 20261126_1631) at the same time.
