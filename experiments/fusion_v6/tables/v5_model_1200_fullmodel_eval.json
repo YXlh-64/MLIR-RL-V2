@@ -1,0 +1,14 @@
+{
+  "bart_linalg": null,
+  "bert_linalg": null,
+  "convnext_tiny_linalg": null,
+  "efficientnet_b0_linalg": 111513474.0,
+  "gat_linalg": 52996250.5,
+  "gin_linalg": 24581496.5,
+  "mobilenet_v3_small_linalg": 61192470.0,
+  "resnet50_linalg": 438327340.5,
+  "resnext50_linalg": null,
+  "t5_linalg": null,
+  "vgg16_linalg": 2972902038.5,
+  "vit_b_16_linalg": null
+}
