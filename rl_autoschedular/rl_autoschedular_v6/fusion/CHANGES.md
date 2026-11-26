@@ -551,3 +551,63 @@ Other:
   producer selection changed 0 initial producers (blocks rarely have several data producers; the full count is
   printed at job start). Expected start-up for 8,093 blocks: ~30 min.
 - User cancelled all pending evals (eval_compare 20261126_1631) at the same time.
+
+## Progress and results as of 2026-11-26 (facts only, no conclusions)
+
+### Data pipeline (units rows)
+| step | job | ran | result |
+|---|---|---|---|
+| export | 19563055 | 2026-11-24 23:19 – 23:38 (18 min) | 34 / 37 enabled models exported (failed: convnext_atto, edgenext_xx_small, wav2vec2_base_L2) |
+| validate | 19563057 | 36 s | 31 / 34 ok (rejected: swin_tiny, distilroberta, opt_125m) |
+| units | 19563060 | 3 min 20 s | 590 units from 31 models (median 17 Linalg ops per unit, max 47) |
+| profile | 19563058 | 3 min 40 s | `data/fusion_units/profile/report/report.md` |
+
+### Baselines (64 cores, Bergamo)
+| baseline | job | ran | result |
+|---|---|---|---|
+| blocks (row A) | 19565535 | 2026-11-25 03:15 – 09:15 (5 h 59 min) | 8,090 ok, 3 failed, of 8,093; train split 6,473 |
+| units | 19565538 | 12 min | 584 ok, 6 failed, of 590; train split 564 |
+| full-model eval | 19565545 | 1 h 41 min | 13 / 13 runnable eval models ok |
+| row B (prefusion only, no agent) | 19565544 | 30 min | 584 units: speedup of prefused vs unfused unit = geomean 1.009x, median 1.002x; 93 units > 1.05x, 45 units < 0.95x |
+
+### Training (64 cores, 8 programs x 8 OpenMP threads; bench_count 64; stopped by the user 2026-11-26 14:23)
+| row | data | fusion modules | job | ran (wall clock) | iterations | iter / h | last checkpoint | geomean speedup, first 50 it. | geomean speedup, last 50 it. | episodes faster than baseline, last 50 it. |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A | blocks | none | 19565537 | 26 h 47 min | 1,698 | 63 | model_1650 | 0.74x | 3.05x | 84% |
+| A' | units | none | 19565540 | 34 h 28 min | 704 | 20 | model_700 | 0.45x | 0.47x | 41% |
+| C | units | prefuse | 19565541 | 34 h 24 min | 793 | 23 | model_750 | 0.45x | 0.63x | 53% |
+| D | units | prefuse + producer_select | 19565542 | 33 h 15 min | 736 | 22 | model_700 | 0.33x | 0.35x | 36% |
+| D+ | units | prefuse + producer_select + tile_guard | 19565543 | 29 h 07 min | 659 | 23 | model_650 | 0.40x | 0.43x | 39% |
+
+- Row A at iterations 1150–1200 (same count as v5_model_1200): geomean speedup 3.94x, 85% of episodes faster than baseline.
+- Units rows, best schedule found per unit during training (row C exec cache, 564 units): median 2.11x over baseline; 22% of units with best < 1x.
+- Speedup = baseline time / agent time of the episode's final schedule, per training episode (`logs/train/final_speedup`).
+- Configured `nb_iterations` 20,000; not reached by any row.
+- Checkpoints every 50 iterations in `/scratch/mh8826/fusion_runs/fusion_<row>_agent/models/`.
+- Curves: `/scratch/mh8826/fusion_runs/plots/training_curves.png` (20-iteration moving average), table `training_summary.md`.
+
+### Full-model evaluation
+- v5_model_1200 (job 19577368, 64 cores, 8 models in parallel, ran 07:48 – 16:20, 8 h 32 min, cancelled by the user while on llama3_2_1b).
+  Result file `/scratch/mh8826/fusion_runs/eval_compare/20261126_0301/v5_model_1200.json`:
+
+  | model | baseline (ms) | v5_model_1200 (ms) | speedup |
+  |---|---|---|---|
+  | efficientnet_b0 | 442.4 | 111.5 | 3.97x |
+  | gat | 44.9 | 53.0 | 0.85x |
+  | gin | 13.9 | 24.6 | 0.57x |
+  | mobilenet_v3_small | 76.9 | 61.2 | 1.26x |
+  | resnet50 | 5178.0 | 438.3 | 11.81x |
+  | vgg16 | 21743.3 | 2972.9 | 7.31x |
+  | bart, bert, convnext_tiny, t5, vit_b_16 | | no execution time (failed) | – |
+  | resnext50 | | eval.py failed | – |
+  | llama3_2_1b | | not finished (cancelled) | – |
+
+  Geomean over the 6 models with a result: 2.43x; median 2.62x.
+  Per-model eval durations: bert ~6.4 h, vit_b_16 ~5 h, bart ~2.5 h, t5 ~1.2 h, others < 1 h.
+  llama3_2_1b: schedule application took > 3 h; TiledFusion on operation_984 hit an MLIR assertion
+  (PybindAdaptors.h:623).
+- Evals of A, A', C, D, D+ checkpoints: submitted three times, never started (queue), all cancelled by the user.
+
+### Pending
+- `train-D_blocks` (job 19582974): blocks data, prefuse + producer_select, 1,200 iterations, 64 cores, 2-day limit.
+  Pending (Priority). Smoke test on 40 blocks: ops 181 -> 106 after prefuse; producer selection changed 0 producers.
