@@ -525,3 +525,7 @@ Other:
   shapes as v5_model_1200, checked: 111 tensors, identical) with its own `results_dir`.
 - `scripts/fusion_data/plot_eval_compare.py`: speedup = baseline / agent time per model; heatmap + geomean on the
   models every agent ran; `comparison.{png,md,csv}`. Failures are shown, not dropped.
+- 2026-11-26 (later): `eval_compare.sh --v5-from <OUT dir> [<job id>]` reuses an earlier v5_model_1200 result (the plot job
+  waits for that job id). `eval_fullmodel.sbatch` FAIL lines now report eval.py's real exit code (was always 0).
+- Remark: evals were stuck on `AssocGrpCpuLimit` (group CPU cap: 5 trainings x 64 cores + 1 eval fill it), and
+  `eval_compare.sh` had been run twice (03:01 and 14:11), doubling the eval jobs.

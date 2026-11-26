@@ -39,10 +39,12 @@ cfg.update(json_file=f"{tmp}/{m}.bench.json", eval_json_file=f"{tmp}/{m}.bench.j
 json.dump(cfg, open(f"{tmp}/{m}.config.json", "w"))
 PY
     echo "[$(date +%T)] start $m"
-    if CONFIG_FILE_PATH="$TMP/$m.config.json" python scripts/eval/eval.py > "$TMP/$m.log" 2>&1; then
-        cp "$TMP/agent_$m/logs/eval/eval_exec_times.json" "$TMP/$m.result.json" && echo "[$(date +%T)] done  $m"
+    local rc=0
+    CONFIG_FILE_PATH="$TMP/$m.config.json" python scripts/eval/eval.py > "$TMP/$m.log" 2>&1 || rc=$?
+    if (( rc == 0 )) && cp "$TMP/agent_$m/logs/eval/eval_exec_times.json" "$TMP/$m.result.json" 2>/dev/null; then
+        echo "[$(date +%T)] done  $m"
     else
-        echo "[$(date +%T)] FAIL  $m (exit $?; log kept in ${OUT%.json}_logs/$m.log)"
+        echo "[$(date +%T)] FAIL  $m (exit $rc; log kept in ${OUT%.json}_logs/$m.log)"
     fi
 }
 
